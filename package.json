@@ -1,0 +1,36 @@
+{
+  "name": "unia-polsko-rumunska",
+  "version": "1.0.0",
+  "description": "Kooperacyjny beat em up 2D: Polak i Rumun na gościnnych występach w Niemczech (Phaser 4 + TypeScript)",
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "tsx watch server/server.ts",
+    "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
+    "start": "node build/server/server.js",
+    "assets": "python3 tools/gen_sprites.py && python3 tools/gen_sounds.py",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kacperous/Polish-Romanian-Union.git"
+  },
+  "author": "Kacperous",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kacperous/Polish-Romanian-Union/issues"
+  },
+  "homepage": "https://github.com/kacperous/Polish-Romanian-Union#readme",
+  "dependencies": {
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "phaser": "^4.2.1"
+  },
+  "private": true,
+  "type": "module"
+}

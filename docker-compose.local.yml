@@ -1,0 +1,9 @@
+# Uruchomienie lokalne / na zwykłym serwerze bez Coolify:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml port game 3000
+# Sam numer "3000" (bez portu hosta) = Docker wybiera PIERWSZY WOLNY port na hoście,
+# więc nic się nie gryzie z zajętym 8080 itp. Powyższa komenda "port" pokaże, który.
+services:
+  game:
+    ports:
+      - "3000"

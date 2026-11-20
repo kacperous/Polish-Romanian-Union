@@ -1,0 +1,21 @@
+# Docker Compose pod Coolify.
+# Nie publikujemy portu na hoście (brak "ports:"), więc nie ma konfliktu
+# z zajętym 8080 itp. Ruch z domeny kieruje proxy Coolify (Traefik)
+# prosto do kontenera na port 3000 — także WebSockety (/ws).
+services:
+  game:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      # Coolify sam wygeneruje domenę i podepnie ją pod port 3000 kontenera
+      - SERVICE_FQDN_GAME_3000
+      - PORT=3000
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
