@@ -4,6 +4,12 @@ Kooperacyjny pikselowy beat 'em up 2D (w stylu Kunio-kun / *Nekketsu Kakutō Den
 Polak i Rumun idą ulicami niemieckiego przedmieścia — od polskiej granicy (prawa strona) w głąb Niemiec (w lewo) —
 i kradną po kolei trzy rzeczy. Na końcu razem zwijają auto i uciekają z powrotem na wschód.
 
+## Języki
+
+Gra jest dostępna po **polsku, angielsku i rumuńsku** (flagi PL / EN / RO w prawym górnym rogu menu).
+Domyślny język wybiera się z ustawień przeglądarki, a wybór jest zapamiętywany. W grze online każdy gracz
+może mieć swój język — host wysyła tylko klucze tłumaczeń (`src/i18n.ts`).
+
 ## Jak grać
 
 | | Klawiatura | Telefon |

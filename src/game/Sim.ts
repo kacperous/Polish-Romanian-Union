@@ -309,11 +309,11 @@ export class Sim {
           this.ev({ e: 'fx', k: 'hit', x: ITEM_POS.bike.x - 6, y: ITEM_POS.bike.y - 8 });
           this.alarm += 8;
           if (this.lockHp <= 0) {
-            this.txt('KŁÓDKA ROZWALONA!', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
+            this.txt('f.lock_broken', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
             this.sfx('pickup');
           } else this.txt(`${this.lockHp}`, ITEM_POS.bike.x, ITEM_POS.bike.y - 26, '#ffffff');
         } else {
-          this.hint(p.id, 'Kopniak nie ruszy kłódki — otwórz ją wytrychem (AKCJA) albo niech Polak walnie pałką!');
+          this.hint(p.id, 'h.kick_lock');
         }
       }
     }
@@ -344,7 +344,7 @@ export class Sim {
     if (this.stage === 1 && !this.bike && this.near(p, ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
       if (this.lockHp > 0) {
         if (p.id === 'romanian') return { kind: 'lockpick', target: 201 };
-        this.hint(p.id, 'Rower przypięty! Walnij kłódkę pałką (BIJ) albo niech Rumun ją otworzy.');
+        this.hint(p.id, 'h.bike_locked');
         return { kind: '', target: -1 };
       }
       return { kind: 'bike', target: 202 };
@@ -352,7 +352,7 @@ export class Sim {
     if (this.stage === 2 && !this.carGone && this.near(p, this.carX, ITEM_POS.car.y, 56, 22)) {
       if (!this.carUnlocked) {
         if (p.id === 'romanian' || !other.present) return { kind: 'carlock', target: 203 };
-        this.hint(p.id, 'Tylko Rumun otworzy auto. Ty stój na czatach obok i pilnuj!');
+        this.hint(p.id, 'h.only_rom_car');
         return { kind: '', target: -1 };
       }
       if (!p.inCar) return { kind: 'enter', target: 204 };
@@ -376,14 +376,14 @@ export class Sim {
         if (Math.abs(n.x - p.in.x) > 26 || Math.abs(n.y - p.in.y) > 12) continue;
         const behind = n.face * (p.in.x - n.x) < 0;
         if (behind) return { kind: 'pickpocket', target: n.id };
-        this.hint(p.id, 'On na ciebie patrzy! Zajdź go od tyłu albo poczekaj, aż się odwróci.');
+        this.hint(p.id, 'h.facing');
         return { kind: '', target: -1 };
       }
     } else {
       for (const n of this.npcs) {
         if (n.robbed || n.rage || n.state === 'ko') continue;
         if (Math.abs(n.x - p.in.x) < 26 && Math.abs(n.y - p.in.y) < 12) {
-          this.hint(p.id, 'Polak nie ma lekkiej ręki — ogłusz go pałką albo zostaw to Rumunowi!');
+          this.hint(p.id, 'h.pole_no_pick');
           break;
         }
       }
@@ -419,7 +419,7 @@ export class Sim {
     if (kind === 'carlock') {
       const other = this.players.pole;
       if (p.id === 'romanian' && other.present && !other.down && !this.near(other, this.carX, ITEM_POS.car.y, 90, 60)) {
-        this.hint(p.id, 'Polak musi stać na czatach przy aucie, bo sam nie dasz rady!');
+        this.hint(p.id, 'h.lookout');
         return;
       }
       if (Math.random() < dt * 6) this.sfx('pick');
@@ -445,8 +445,8 @@ export class Sim {
       this.alarm += 20;
       this.txt('!', n.x, n.y - 50, '#ff3b3b');
       this.enrage(n, p);
-      if (kind === 'pickpocket') this.ev({ e: 'msg', s: 'Przyłapany! Szwab dostał szału!', who: p.id });
-      else this.ev({ e: 'msg', s: 'Ktoś cię widzi! Uważaj, kiedy się odwracają!', who: p.id });
+      if (kind === 'pickpocket') this.ev({ e: 'msg', s: 'm.caught_pick', who: p.id });
+      else this.ev({ e: 'msg', s: 'm.caught', who: p.id });
       return true;
     }
     return false;
@@ -483,35 +483,35 @@ export class Sim {
         other.hp = Math.ceil(PLAYER_MAX_HP / 2);
         other.invuln = 1.5;
         this.sfx('pickup');
-        this.txt('WSTAWAJ!', other.in.x, other.in.y - 44, '#7dff7d');
+        this.txt('f.revive', other.in.x, other.in.y - 44, '#7dff7d');
         break;
       }
       case 'gnome':
         this.gnome = 1;
         this.steals++;
         this.sfx('pickup');
-        this.txt('KRASNAL!', ITEM_POS.gnome.x, ITEM_POS.gnome.y - 30, '#ffe040');
+        this.txt('f.gnome', ITEM_POS.gnome.x, ITEM_POS.gnome.y - 30, '#ffe040');
         this.money += 50;
-        this.advanceStage(1, 'Krasnal ukradziony! Idźcie dalej ← do miasta.');
+        this.advanceStage(1, 'm.gnome_done');
         break;
       case 'lockpick':
         this.lockHp = 0;
         this.sfx('pickup');
-        this.txt('OTWARTE!', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
+        this.txt('f.unlocked', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
         break;
       case 'bike':
         this.bike = 1;
         this.steals++;
         this.money += 120;
         this.sfx('pickup');
-        this.txt('ROWER!', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
-        this.advanceStage(2, 'Rower jest wasz! Ostatni skok: AUTO. ←');
+        this.txt('f.bike', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
+        this.advanceStage(2, 'm.bike_done');
         break;
       case 'carlock':
         this.carUnlocked = 1;
         this.sfx('pickup');
-        this.txt('AUTO OTWARTE!', this.carX, ITEM_POS.car.y - 50, '#ffe040');
-        this.ev({ e: 'msg', s: 'Auto otwarte! Obaj wsiadajcie (AKCJA przy aucie)!' });
+        this.txt('f.car_unlocked', this.carX, ITEM_POS.car.y - 50, '#ffe040');
+        this.ev({ e: 'msg', s: 'm.car_open' });
         break;
       case 'enter':
         p.inCar = true;
@@ -521,9 +521,9 @@ export class Sim {
           this.carT = 0;
           this.sfx('engine');
           this.steals++;
-          this.ev({ e: 'msg', s: 'W NOGI! Wracamy na wschód!' });
+          this.ev({ e: 'msg', s: 'm.escape' });
         } else {
-          this.ev({ e: 'msg', s: 'Czekam w aucie na kumpla...', who: p.id });
+          this.ev({ e: 'msg', s: 'm.wait_car', who: p.id });
         }
         break;
     }
@@ -694,7 +694,8 @@ export class Sim {
         const other = this.players[p.id === 'pole' ? 'romanian' : 'pole'];
         this.ev({
           e: 'msg',
-          s: other.present && !other.down ? `${p.id === 'pole' ? 'Polak' : 'Rumun'} leży! Podnieś go (AKCJA obok)!` : 'Padłeś!',
+          s: other.present && !other.down ? 'm.down_partner' : 'm.down_self',
+          a: { who: `char.${p.id}` },
         });
       }
     }
@@ -717,7 +718,7 @@ export class Sim {
           this.enrage(cop);
         }
         this.sfx('siren');
-        this.ev({ e: 'msg', s: 'POLIZEI! Zwiewajcie albo walczcie!' });
+        this.ev({ e: 'msg', s: 'm.police' });
       }
       this.alarm = 45;
       this.policeCooldown = 12;
@@ -731,7 +732,7 @@ export class Sim {
     if (this.carT > 3.2 && !this.ended) {
       this.ended = true;
       this.sfx('win');
-      this.ev({ e: 'end', win: true, reason: 'Uciekliście kradzionym autem do domu!' });
+      this.ev({ e: 'end', win: true, reason: 'end.win_reason' });
     }
   }
 
@@ -741,7 +742,7 @@ export class Sim {
     if (present.length && present.every((p) => p.down)) {
       this.ended = true;
       this.sfx('lose');
-      this.ev({ e: 'end', win: false, reason: 'Leżycie na chodniku. Polizei już jedzie...' });
+      this.ev({ e: 'end', win: false, reason: 'end.lose_reason' });
     }
   }
 

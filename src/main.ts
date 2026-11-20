@@ -7,8 +7,10 @@ import { LobbyScene } from './scenes/LobbyScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 import { EndScene } from './scenes/EndScene';
+import { applyDocumentLang } from './i18n';
 
 async function start() {
+  applyDocumentLang();
   try {
     await Promise.race([document.fonts.load('24px Pixelify'), new Promise((r) => setTimeout(r, 2500))]);
   } catch {

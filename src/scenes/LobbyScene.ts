@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
+import { t } from '../i18n';
 import { button, Button, COLORS, menuBackdrop, txt } from '../ui';
 import { net } from '../net/Net';
-import { CharId, CHAR_NAMES } from '../game/constants';
+import { CharId } from '../game/constants';
 import type { GameStartData } from '../game/types';
 
 type Mode = 'solo' | 'host' | 'guest';
@@ -10,10 +11,6 @@ interface Picks {
   guest: CharId | null;
 }
 
-const DESC: Record<CharId, string> = {
-  pole: 'PAŁKA — mocne ciosy (BIJ)\nRozwala kłódki jednym... trzema\nStoi na czatach przy aucie',
-  romanian: 'LEKKA RĘKA — okrada od tyłu\n(AKCJA, gdy Szwab jest odwrócony)\nWytrych do kłódek i aut, kopniaki',
-};
 
 export class LobbyScene extends Phaser.Scene {
   private mode: Mode = 'solo';
@@ -40,24 +37,24 @@ export class LobbyScene extends Phaser.Scene {
     menuBackdrop(this);
 
     if (this.mode === 'solo') {
-      txt(this, 480, 44, 'WYBIERZ POSTAĆ', 40, '#ffe040');
-      txt(this, 480, 82, 'Tryb solo: grasz sam — niektóre zadania są łatwiejsze', 18, '#ffffff', 4);
+      txt(this, 480, 44, t('lobby.pick'), 40, '#ffe040');
+      txt(this, 480, 82, t('lobby.solo_sub'), 18, '#ffffff', 4);
     } else {
-      txt(this, 480, 30, 'KOD GRY', 22, '#ffffff', 5);
+      txt(this, 480, 30, t('lobby.code'), 22, '#ffffff', 5);
       const codeT = txt(this, 480, 68, this.code.split('').join(' '), 52, '#ffe040', 8);
       if (this.mode === 'host') {
         codeT.x = 400;
-        button(this, 700, 68, 210, 46, 'KOPIUJ LINK', COLORS.blue, () => this.copyLink(), 20);
+        button(this, 700, 68, 210, 46, t('lobby.copy'), COLORS.blue, () => this.copyLink(), 20);
       }
     }
 
     (['pole', 'romanian'] as CharId[]).forEach((c, i) => this.makeCard(c, i === 0 ? 270 : 690));
 
     this.status = txt(this, 480, 470, '', 22, '#ffffff', 5);
-    button(this, 110, 505, 170, 48, '← MENU', COLORS.grey, () => this.backToMenu(), 22);
+    button(this, 110, 505, 170, 48, t('lobby.menu'), COLORS.grey, () => this.backToMenu(), 22);
 
     if (this.mode !== 'guest') {
-      this.startBtn = button(this, 480, 512, 260, 52, 'START!', COLORS.red, () => this.startGame(), 30);
+      this.startBtn = button(this, 480, 512, 260, 52, t('lobby.start'), COLORS.red, () => this.startGame(), 30);
     }
 
     // sieć
@@ -94,12 +91,12 @@ export class LobbyScene extends Phaser.Scene {
             this.launch({ mode: 'guest', me: d.guest, code: this.code });
           }
         }),
-        net.on('peer_left', () => this.backToMenu('Host opuścił grę.')),
+        net.on('peer_left', () => this.backToMenu(t('err.host_left'))),
       );
       net.send({ k: 'hello' });
     }
     if (this.mode !== 'solo') {
-      this.offs.push(net.on('disconnected', () => this.backToMenu('Utracono połączenie z serwerem.')));
+      this.offs.push(net.on('disconnected', () => this.backToMenu(t('err.lost'))));
     }
     this.events.once('shutdown', () => this.offs.forEach((f) => f()));
     this.refresh();
@@ -111,9 +108,9 @@ export class LobbyScene extends Phaser.Scene {
     this.cards[c] = card;
     const sp = this.add.sprite(x - 90, y + 10, `char_${c}`).setScale(5).play(`char_${c}-idle`);
     if (c === 'romanian') sp.setFlipX(false);
-    txt(this, x + 60, y - 110, CHAR_NAMES[c].toUpperCase(), 36, c === 'pole' ? '#ff5060' : '#ffd040', 6);
+    txt(this, x + 60, y - 110, t(`char.${c}.up`), 36, c === 'pole' ? '#ff5060' : '#ffd040', 6);
     this.add
-      .text(x - 30, y - 70, DESC[c], {
+      .text(x - 30, y - 70, t(`desc.${c}`), {
         fontFamily: 'Pixelify, monospace',
         fontSize: '15px',
         color: '#ffffff',
@@ -140,7 +137,7 @@ export class LobbyScene extends Phaser.Scene {
   private pick(c: CharId) {
     const other = this.mySide() === 'host' ? this.picks.guest : this.picks.host;
     if (other === c) {
-      this.status.setColor('#ff6060').setText('Tę postać wybrał już kumpel!');
+      this.status.setColor('#ff6060').setText(t('lobby.taken'));
       return;
     }
     this.sound.play('click', { volume: 0.5 });
@@ -164,22 +161,22 @@ export class LobbyScene extends Phaser.Scene {
     const mine = this.picks[me];
     const theirs = this.picks[me === 'host' ? 'guest' : 'host'];
     for (const c of ['pole', 'romanian'] as CharId[]) {
-      const tag = c === mine ? 'TY' : c === theirs ? 'KUMPEL' : '';
+      const tag = c === mine ? t('lobby.you') : c === theirs ? t('lobby.mate') : '';
       this.tags[c].setText(tag).setColor(c === mine ? '#7dff7d' : '#80c0ff');
       this.cards[c].setStrokeStyle(4, c === mine ? 0x7dff7d : c === theirs ? 0x80c0ff : 0x505060);
     }
     let s = '';
     let canStart = false;
     if (this.mode === 'solo') {
-      s = mine ? 'Gotowy? Naciśnij START!' : 'Kliknij postać, którą chcesz grać';
+      s = mine ? t('lobby.solo_ready') : t('lobby.solo_pick');
       canStart = !!mine;
     } else if (this.mode === 'host') {
-      if (!this.guestPresent) s = 'Czekam na kumpla... podaj mu kod!';
-      else if (!this.picks.host || !this.picks.guest) s = 'Kumpel jest! Wybierzcie postacie.';
-      else s = 'Wszystko gotowe — START!';
+      if (!this.guestPresent) s = t('lobby.waiting');
+      else if (!this.picks.host || !this.picks.guest) s = t('lobby.mate_here');
+      else s = t('lobby.ready');
       canStart = this.guestPresent && !!this.picks.host && !!this.picks.guest;
     } else {
-      s = !mine ? 'Wybierz postać' : 'Czekaj, aż host wystartuje grę...';
+      s = !mine ? t('lobby.guest_pick') : t('lobby.guest_wait');
     }
     this.status.setColor('#ffffff').setText(s);
     this.startBtn?.setEnabled(canStart);
@@ -187,7 +184,7 @@ export class LobbyScene extends Phaser.Scene {
 
   private copyLink() {
     const link = `${location.origin}${location.pathname}?join=${this.code}`;
-    const done = () => this.status.setColor('#7dff7d').setText('Link skopiowany! Wyślij go kumplowi.');
+    const done = () => this.status.setColor('#7dff7d').setText(t('lobby.copied'));
     if (navigator.clipboard) navigator.clipboard.writeText(link).then(done, () => this.status.setText(link));
     else this.status.setText(link);
   }

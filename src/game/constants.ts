@@ -15,16 +15,11 @@ export const PLAYER_MAX_HP = 12;
 export type CharId = 'pole' | 'romanian';
 export type NpcKind = 'herr' | 'frau' | 'jogger' | 'opa' | 'gartner' | 'boss' | 'polizei';
 
-export const CHAR_NAMES: Record<CharId, string> = {
-  pole: 'Polak',
-  romanian: 'Rumun',
-};
-
 /** Poziomy (od prawej do lewej). index 0 = pierwszy poziom (prawa strona świata). */
 export const LEVELS = [
-  { name: 'Poziom 1: Przedmieście', sub: 'Ukradnij krasnala ogrodowego', x0: LEVEL_W * 2, x1: LEVEL_W * 3 },
-  { name: 'Poziom 2: Einkaufsstraße', sub: 'Ukradnij rower', x0: LEVEL_W, x1: LEVEL_W * 2 },
-  { name: 'Poziom 3: Willowe osiedle', sub: 'Ukradnijcie auto — RAZEM!', x0: 0, x1: LEVEL_W },
+  { x0: LEVEL_W * 2, x1: LEVEL_W * 3 },
+  { x0: LEVEL_W, x1: LEVEL_W * 2 },
+  { x0: 0, x1: LEVEL_W },
 ];
 
 export const ANIM_FRAMES = {

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
+import { t } from '../i18n';
 import type { GameScene } from './GameScene';
-import { CharId, CHAR_NAMES, LEVELS, PLAYER_MAX_HP } from '../game/constants';
+import { CharId, PLAYER_MAX_HP } from '../game/constants';
 import { controls, isTouchDevice } from '../game/Controls';
 import { FONT, txt } from '../ui';
 
@@ -46,7 +47,7 @@ export class UIScene extends Phaser.Scene {
       const cont = this.add.container(x, 10);
       const bg = this.add.rectangle(0, 0, 204, 58, 0x181020, 0.75).setOrigin(0).setStrokeStyle(3, i === 0 ? 0x7dff7d : 0x80c0ff);
       const face = this.add.sprite(30, 30, `char_${c}`, 0).setScale(1.6).setCrop(8, 4, 24, 24);
-      const name = this.add.text(56, 6, `${CHAR_NAMES[c]}${i === 0 ? ' (ty)' : ''}`, { fontFamily: FONT, fontSize: '18px', color: '#ffffff' });
+      const name = this.add.text(56, 6, `${t(`char.${c}`)}${i === 0 ? ` (${t('you')})` : ''}`, { fontFamily: FONT, fontSize: '18px', color: '#ffffff' });
       const g = this.add.graphics();
       cont.add([bg, face, name, g]);
       g.setPosition(56, 32);
@@ -80,7 +81,7 @@ export class UIScene extends Phaser.Scene {
 
     // strzałka "DALEJ"
     const arrImg = this.add.image(0, 0, 'arrow').setScale(3);
-    const arrT = txt(this, 0, 40, 'DALEJ!', 22, '#ffe040', 5);
+    const arrT = txt(this, 0, 40, t('hud.next'), 22, '#ffe040', 5);
     this.arrow = this.add.container(70, 270, [arrImg, arrT]).setVisible(false);
     this.tweens.add({ targets: this.arrow, x: 50, duration: 400, yoyo: true, repeat: -1 });
 
@@ -96,7 +97,7 @@ export class UIScene extends Phaser.Scene {
     });
 
     if (isTouchDevice()) this.createTouch();
-    else txt(this, 480, 525, 'WASD/strzałki: ruch • J/Spacja: BIJ • K/E (przytrzymaj): AKCJA • ESC: menu', 14, '#c0c0c0', 3);
+    else txt(this, 480, 525, t('hud.keys'), 14, '#c0c0c0', 3);
 
     if (this.game_.data0.mode === 'solo') {
       this.panels[this.game_.other].setVisible(false);
@@ -111,10 +112,9 @@ export class UIScene extends Phaser.Scene {
   }
 
   private levelBanner(i: number) {
-    const lv = LEVELS[i];
     const band = this.add.rectangle(480, 250, 960, 110, 0x181020, 0.75);
-    const t1 = txt(this, 480, 232, lv.name.toUpperCase(), 38, '#ffffff', 7);
-    const t2 = txt(this, 480, 278, `Cel: ${lv.sub}`, 22, '#ffe040', 5);
+    const t1 = txt(this, 480, 232, t(`lvl.${i}.name`).toUpperCase(), 38, '#ffffff', 7);
+    const t2 = txt(this, 480, 278, t('hud.goal', { g: `lvl.${i}.sub` }), 22, '#ffe040', 5);
     const all = [band, t1, t2];
     all.forEach((o) => o.setAlpha(0));
     this.tweens.add({ targets: all, alpha: 1, duration: 300 });
@@ -144,8 +144,8 @@ export class UIScene extends Phaser.Scene {
       c.setInteractive();
       return c;
     };
-    const atk = mkBtn(866, 430, 62, 'BIJ', 0xd8263a);
-    const act = mkBtn(742, 482, 50, 'AKCJA', 0x1f3f98);
+    const atk = mkBtn(866, 430, 62, t('btn.atk'), 0xd8263a);
+    const act = mkBtn(742, 482, 50, t('btn.act'), 0x1f3f98);
     atk.on('pointerdown', () => {
       controls.touchAtk = true;
       atk.setScale(0.9);
@@ -235,7 +235,7 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x181020, 0.85).fillRect(770, 32, 180, 24);
     const blink = a > 0.75 && Math.floor(this.time.now / 200) % 2 === 0;
     g.fillStyle(blink ? 0xffffff : a > 0.75 ? 0xff3030 : a > 0.4 ? 0xffa030 : 0x60a0ff, 1).fillRect(773, 35, Math.round(174 * a), 18);
-    this.alarmT.setText(a > 0.75 ? 'UWAGA!' : '');
+    this.alarmT.setText(a > 0.75 ? t('hud.alarm') : '');
 
     this.hintT.setText(this.game_.actionHint());
 

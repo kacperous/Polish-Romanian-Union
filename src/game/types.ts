@@ -52,7 +52,7 @@ export type GameEvent =
   | { e: 'fx'; k: 'hit' | 'dust' | 'coin'; x: number; y: number }
   | { e: 'txt'; s: string; x: number; y: number; c: string }
   | { e: 'hurt'; who: CharId; dx: number }
-  | { e: 'msg'; s: string; who?: CharId }
+  | { e: 'msg'; s: string; who?: CharId; a?: Record<string, string> }
   | { e: 'stage'; stage: number }
   | { e: 'end'; win: boolean; reason: string };
 

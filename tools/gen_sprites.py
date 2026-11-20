@@ -989,16 +989,22 @@ def gen_far():
 
 
 def gen_title():
-    """Duzy logotyp z postaciami na ekran tytulowy (480x270 na przezroczystym tle)."""
-    img = Image.new("RGBA", (480, 120), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    f = font(34)
-    d.fontmode = "1"
-    for txt, y, col, shadow in (("UNIA", 34, 0xFFFFFF, 0xD8263A), ("POLSKO-RUMUŃSKA", 80, 0xF2C230, 0x1F3F98)):
-        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2), (2, 2), (3, 3)):
-            d.text((240 + ox, y + oy), txt, fill=rgb(shadow if (ox, oy) in ((2, 2), (3, 3)) else 0x181020), font=f, anchor="mm")
-        d.text((240, y), txt, fill=rgb(col), font=f, anchor="mm")
-    img.save(os.path.join(OUT, "title.png"))
+    """Logotypy na ekran tytulowy (PL / EN / RO)."""
+    variants = {
+        "title": (("UNIA", 34), ("POLSKO-RUMUŃSKA", 34)),
+        "title_en": (("POLISH-ROMANIAN", 34), ("UNION", 34)),
+        "title_ro": (("UNIUNEA", 34), ("POLONO-ROMÂNĂ", 34)),
+    }
+    for name, ((l1, s1), (l2, s2)) in variants.items():
+        img = Image.new("RGBA", (480, 120), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.fontmode = "1"
+        for (txt, size), y, col, shadow in (((l1, s1), 34, 0xFFFFFF, 0xD8263A), ((l2, s2), 80, 0xF2C230, 0x1F3F98)):
+            f = font(size)
+            for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2), (2, 2), (3, 3)):
+                d.text((240 + ox, y + oy), txt, fill=rgb(shadow if (ox, oy) in ((2, 2), (3, 3)) else 0x181020), font=f, anchor="mm")
+            d.text((240, y), txt, fill=rgb(col), font=f, anchor="mm")
+        img.save(os.path.join(OUT, f"{name}.png"))
 
 
 if __name__ == "__main__":

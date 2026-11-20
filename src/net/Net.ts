@@ -20,7 +20,7 @@ class NetClient {
       const ws = new WebSocket(this.url());
       this.ws = ws;
       const timer = setTimeout(() => {
-        reject(new Error('Brak połączenia z serwerem'));
+        reject(new Error('err.timeout'));
         ws.close();
       }, 6000);
       ws.onopen = () => {
@@ -29,7 +29,7 @@ class NetClient {
       };
       ws.onerror = () => {
         clearTimeout(timer);
-        reject(new Error('Nie można połączyć z serwerem'));
+        reject(new Error('err.connect'));
       };
       ws.onclose = () => {
         this.ws = null;
@@ -95,7 +95,7 @@ class NetClient {
       const offErr = this.on('error', (m) => {
         offOk();
         offErr();
-        reject(new Error(m.msg));
+        reject(new Error(m.code ? `err.${m.code}` : m.msg));
       });
       this.raw({ t: 'join', code });
     });

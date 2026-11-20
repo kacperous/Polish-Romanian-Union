@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { t } from '../i18n';
 import {
   AnimName,
   CharId,
@@ -192,7 +193,7 @@ export class GameScene extends Phaser.Scene {
     // gracze
     for (const c of ['pole', 'romanian'] as CharId[]) {
       const v = new CharView(this, `char_${c}`, PLAYER_START[c].x, PLAYER_START[c].y);
-      v.setLabel(c === this.me ? 'TY' : c === 'pole' ? 'POLAK' : 'RUMUN', c === this.me ? '#7dff7d' : '#80c0ff');
+      v.setLabel(c === this.me ? t('lobby.you') : t(`char.${c}.up`), c === this.me ? '#7dff7d' : '#80c0ff');
       this.views[c] = v;
     }
     if (solo) this.views[this.other].setVisible(false);
@@ -215,8 +216,8 @@ export class GameScene extends Phaser.Scene {
         net.on('relay', (d) => {
           if (d.k === 'in') this.remoteInput = d.i;
         }),
-        net.on('peer_left', () => this.abort('Kumpel się rozłączył.')),
-        net.on('disconnected', () => this.abort('Utracono połączenie z serwerem.')),
+        net.on('peer_left', () => this.abort(t('err.mate_left'))),
+        net.on('disconnected', () => this.abort(t('err.lost'))),
       );
     } else if (data.mode === 'guest') {
       this.offs.push(
@@ -224,8 +225,8 @@ export class GameScene extends Phaser.Scene {
           if (d.k === 'snap') this.onSnap(d.s as Snapshot);
           else if (d.k === 'again') this.scene.start('Lobby', { mode: 'guest', code: this.data0.code });
         }),
-        net.on('peer_left', () => this.abort('Host się rozłączył.')),
-        net.on('disconnected', () => this.abort('Utracono połączenie z serwerem.')),
+        net.on('peer_left', () => this.abort(t('err.host_disc'))),
+        net.on('disconnected', () => this.abort(t('err.lost'))),
       );
     }
     this.events.once('shutdown', () => {
@@ -384,7 +385,7 @@ export class GameScene extends Phaser.Scene {
         }
         break;
       case 'txt':
-        this.floatText(e.s, e.x, e.y, e.c);
+        this.floatText(t(e.s), e.x, e.y, e.c);
         break;
       case 'hurt':
         if (e.who === this.me) {
@@ -395,7 +396,7 @@ export class GameScene extends Phaser.Scene {
         }
         break;
       case 'msg':
-        if (!e.who || e.who === this.me) this.events.emit('toast', e.s);
+        if (!e.who || e.who === this.me) this.events.emit('toast', t(e.s, e.a));
         break;
       case 'stage':
         this.events.emit('stage', e.stage);
@@ -573,25 +574,25 @@ export class GameScene extends Phaser.Scene {
     const s = this.snap;
     if (!s) return '';
     const me = s.p[this.me];
-    if (me.down) return 'Leżysz! Kumpel musi cię podnieść';
-    if (me.inCar) return 'Siedzisz w aucie...';
+    if (me.down) return t('hint.down');
+    if (me.inCar) return t('hint.in_car');
     const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
     const o = s.p[this.other];
-    if (o.present && o.down && near(o.x, o.y, 28, 16)) return 'AKCJA: podnieś kumpla';
-    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return 'AKCJA: zwiń krasnala (gdy nikt nie patrzy!)';
+    if (o.present && o.down && near(o.x, o.y, 28, 16)) return t('hint.revive');
+    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return t('hint.gnome');
     if (s.stage === 1 && !s.o.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
-      if (s.o.lockHp > 0) return this.me === 'romanian' ? 'AKCJA: otwórz kłódkę wytrychem' : 'BIJ: rozwal kłódkę pałką!';
-      return 'AKCJA: bierz rower';
+      if (s.o.lockHp > 0) return this.me === 'romanian' ? t('hint.lockpick') : t('hint.smash');
+      return t('hint.bike');
     }
     if (s.stage === 2 && !s.o.carGone && near(s.o.carX, ITEM_POS.car.y, 56, 22)) {
-      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? 'AKCJA: otwórz auto (Polak na czatach!)' : 'Stój na czatach — Rumun otwiera auto';
-      return 'AKCJA: wsiadaj do auta';
+      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? t('hint.carlock') : t('hint.lookout');
+      return t('hint.enter');
     }
     for (const [, , x, y, face, , f] of s.n) {
       if (!near(x, y, 36, 14)) continue;
-      if (f & NF_KO) return f & NF_LOOTED ? '' : 'AKCJA: przeszukaj kieszenie';
+      if (f & NF_KO) return f & NF_LOOTED ? '' : t('hint.loot');
       if (this.me === 'romanian' && !(f & (NF_ROBBED | NF_RAGE))) {
-        return face * (this.px - x) < 0 ? 'AKCJA: okradnij (od tyłu!)' : 'Patrzy na ciebie — zajdź od tyłu';
+        return face * (this.px - x) < 0 ? t('hint.pick') : t('hint.facing');
       }
     }
     return '';

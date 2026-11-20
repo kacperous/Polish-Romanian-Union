@@ -129,11 +129,11 @@ wss.on('connection', (ws) => {
         const code = String(msg.code || '').trim();
         const room = rooms.get(code);
         if (!room) {
-          send(ws, { t: 'error', msg: 'Nie ma gry o takim kodzie.' });
+          send(ws, { t: 'error', code: 'not_found', msg: 'Nie ma gry o takim kodzie.' });
           return;
         }
         if (room.guest && room.guest !== ws) {
-          send(ws, { t: 'error', msg: 'Ta gra jest już pełna.' });
+          send(ws, { t: 'error', code: 'full', msg: 'Ta gra jest już pełna.' });
           return;
         }
         leave(ws);
