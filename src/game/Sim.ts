@@ -15,10 +15,13 @@ import {
 import { mulberry32, randomSeed, Rng } from './rng';
 import { PROLOG, Role } from './data/areas';
 import { ITEMS, ItemKind, NPC_THROW_DMG } from './data/items';
+import { GOODS, INV_SLOTS, SHOPS, ShopId } from './data/shops';
+import { canLearn, hasTech, techBit, TechId } from './data/techniques';
 import {
   attackDmg,
   baseStats,
   CharStats,
+  clampStat,
   dmgTaken,
     knockdownHits,
   knockdownTime,
@@ -101,6 +104,8 @@ export interface Npc {
   coins: number;
   /** czy podnosi przedmioty i nimi rzuca */
   grabs: boolean;
+  /** Brzytwa: przez ten czas „nie widzi” kradzieży */
+  blindT: number;
 }
 
 export interface Item {
@@ -153,6 +158,27 @@ export interface PlayerSim {
   latch: boolean;
   /** id trzymanego przedmiotu */
   holdItem: number;
+  /** techniki (bity TECH_IDS) */
+  techs: number;
+  /** ekwipunek: id towarów na wynos */
+  inv: string[];
+  /** sklep, w którym gracz jest (pusty = na ulicy) */
+  shop: ShopId | '';
+  /** Brzytwa: jedno przyłapanie przy bieżącej robocie już wybaczone */
+  grace: boolean;
+}
+
+/** Postęp przenoszony między sesjami (zapis / hasło). */
+export interface Progress {
+  stats: Record<CharId, CharStats>;
+  techs: Record<CharId, number>;
+  inv: Record<CharId, string[]>;
+  money: number;
+}
+
+export interface SimOptions {
+  seed?: number;
+  progress?: Progress;
 }
 
 const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
@@ -222,10 +248,12 @@ export class Sim {
   private hintCd: Record<CharId, number> = { pole: 0, romanian: 0 };
   readonly rng: Rng;
 
-  constructor(present: Record<CharId, boolean>, readonly solo: boolean, opts: { seed?: number } = {}) {
+  constructor(present: Record<CharId, boolean>, readonly solo: boolean, opts: SimOptions = {}) {
     this.rng = mulberry32(opts.seed ?? randomSeed());
+    const pr = opts.progress;
+    if (pr) this.money = pr.money;
     const mk = (id: CharId): PlayerSim => {
-      const stats = baseStats(id);
+      const stats = pr ? { ...pr.stats[id] } : baseStats(id);
       return {
         id,
         present: present[id],
@@ -245,6 +273,10 @@ export class Sim {
         holdNpc: -1,
         latch: false,
         holdItem: -1,
+        techs: pr ? pr.techs[id] : 0,
+        inv: pr ? [...pr.inv[id]] : [],
+        shop: '',
+        grace: false,
       };
     };
     this.players = { pole: mk('pole'), romanian: mk('romanian') };
@@ -294,6 +326,7 @@ export class Sim {
       holdItem: -1,
       coins: 0,
       grabs: role !== 'police' && this.rng() < 0.4,
+      blindT: 0,
     };
     this.npcs.push(n);
     return n;
@@ -360,7 +393,103 @@ export class Sim {
   }
 
   private alive(): PlayerSim[] {
-    return Object.values(this.players).filter((p) => p.present && !p.down && !p.inCar);
+    return Object.values(this.players).filter((p) => p.present && !p.down && !p.inCar && !p.shop);
+  }
+
+  has(p: PlayerSim, t: TechId): boolean {
+    return hasTech(p.techs, t);
+  }
+
+  /** Bieżący postęp (do zapisu). */
+  progress(): Progress {
+    const P = this.players;
+    return {
+      stats: { pole: { ...P.pole.stats }, romanian: { ...P.romanian.stats } },
+      techs: { pole: P.pole.techs, romanian: P.romanian.techs },
+      inv: { pole: [...P.pole.inv], romanian: [...P.romanian.inv] },
+      money: this.money,
+    };
+  }
+
+  // --- sklepy i ekwipunek ---------------------------------------------------
+  enterShop(who: CharId, shop: ShopId) {
+    const p = this.players[who];
+    if (p.down || p.inCar) return;
+    this.releaseHeld(p);
+    this.playerDrop(p);
+    p.shop = shop;
+    p.prog = 0;
+    p.kind = '';
+    this.sfx('click');
+    this.ev({ e: 'shop', who, shop });
+  }
+
+  leaveShop(who: CharId) {
+    const p = this.players[who];
+    if (!p.shop) return;
+    p.shop = '';
+    p.invuln = Math.max(p.invuln, 1);
+    p.latch = true;
+    this.ev({ e: 'shop', who, shop: '' });
+  }
+
+  /** Zakup w sklepie: zjedz na miejscu (eat) albo na wynos (take). Zwraca klucz błędu albo ''. */
+  buy(who: CharId, goodId: string, mode: 'eat' | 'take'): string {
+    const err = this.tryBuy(who, goodId, mode);
+    if (err) {
+      this.sfx('alert');
+      this.ev({ e: 'msg', s: err, who });
+    }
+    return err;
+  }
+
+  private tryBuy(who: CharId, goodId: string, mode: 'eat' | 'take'): string {
+    const p = this.players[who];
+    if (!p.shop) return 'shop.err_closed';
+    const good = SHOPS[p.shop].goods.find((g) => g.id === goodId);
+    if (!good) return 'shop.err_closed';
+    if (good.who && good.who !== who) return 'shop.err_who';
+    if (good.book && (this.has(p, good.book) || !canLearn(who, good.book))) return 'shop.err_known';
+    if (mode === 'take' && (!good.take || good.book)) return 'shop.err_closed';
+    if (mode === 'take' && p.inv.length >= INV_SLOTS) return 'shop.err_full';
+    if (this.money < good.price) return 'shop.err_money';
+    this.money -= good.price;
+    this.sfx('coin');
+    if (good.book) {
+      p.techs |= techBit(good.book);
+      this.sfx('pickup');
+      this.ev({ e: 'msg', s: 'shop.learned', who, a: { t: `tech.${good.book}` } });
+    } else if (mode === 'take') {
+      p.inv.push(good.id);
+    } else {
+      this.consume(p, good.id);
+    }
+    return '';
+  }
+
+  /** Zjedzenie towaru z ekwipunku. */
+  useItem(who: CharId, slot: number): boolean {
+    const p = this.players[who];
+    if (p.down || p.inCar || slot < 0 || slot >= p.inv.length) return false;
+    const [id] = p.inv.splice(slot, 1);
+    this.consume(p, id);
+    return true;
+  }
+
+  private consume(p: PlayerSim, goodId: string) {
+    const good = GOODS[goodId];
+    if (!good) return;
+    const before = maxHp(p.stats);
+    const ups: string[] = [];
+    for (const [k, v] of Object.entries(good.stats ?? {}) as [keyof CharStats, number][]) {
+      const old = p.stats[k];
+      p.stats[k] = clampStat(old + v);
+      if (p.stats[k] > old) ups.push(`${k}+${p.stats[k] - old}`);
+    }
+    const mhp = maxHp(p.stats);
+    p.hp = Math.min(mhp, p.hp + (mhp - before) + (good.heal ?? 0));
+    this.sfx('pickup');
+    this.ev({ e: 'eat', who: p.id, good: goodId, ups });
   }
 
   private npc(id: number): Npc | undefined {
@@ -408,7 +537,7 @@ export class Sim {
             const it = this.item(p.holdItem);
             if (p.holdNpc >= 0) this.throwHeld(p);
             else if (it && (ITEMS[it.kind].type === 'throw' || p.in.ak === 'j')) this.throwItem(p, it);
-            else this.resolveAttack(p, p.in.ak, it);
+            else this.resolveAttack(p, p.in.ak === 'c' && !this.has(p, 'piesc') ? 'n' : p.in.ak, it);
           }
         }
       }
@@ -478,23 +607,31 @@ export class Sim {
     const isPole = p.id === 'pole';
     const heavy = ak === 'j' || ak === 'r' || ak === 'c';
     const wdef = weapon ? ITEMS[weapon.kind] : null;
-    const range = (wdef ? wdef.range : isPole ? 32 : 28) + (ak === 'r' ? 6 : ak === 'j' ? 4 : 0);
+    // techniki z książek
+    const spin = ak === 'j' && !wdef && this.has(p, 'mlynek');
+    const flyKick = ak === 'j' && !wdef && this.has(p, 'wyskok');
+    const ram = ak === 'r' && this.has(p, 'taran');
+    let range = (wdef ? wdef.range : isPole ? 32 : 28) + (ak === 'r' ? 6 : ak === 'j' ? 4 : 0);
+    if (flyKick) range += 12;
+    if (ram) range += 16;
     const base = wdef ? attackDmg('pole', p.stats) + wdef.dmg : attackDmg(p.id, p.stats);
-    const dmg = Math.round(base * (heavy ? 1.25 : 1) * (ak === 'c' ? 1.6 : 1));
+    const techMult = flyKick || ram ? 1.5 : spin ? 1.2 : 1;
+    const dmg = Math.round(base * (heavy ? 1.25 : 1) * (ak === 'c' ? 1.6 : 1) * techMult);
     const { x, y, face } = p.in;
     this.sfx('swing');
     let hitSomething = false;
     for (const n of this.npcs) {
       if (UNHITTABLE.includes(n.state)) continue;
-      const dx = (n.x - x) * face;
+      const dx = spin ? Math.abs(n.x - x) : (n.x - x) * face;
       if (dx < -4 || dx > range || Math.abs(n.y - y) > 14) continue;
       hitSomething = true;
+      const hitDir = (spin ? Math.sign(n.x - x) || face : face) as 1 | -1;
       n.combo = n.comboT > 0 ? n.combo + 1 : 1;
       n.comboT = 1.2;
       const knock = heavy || n.combo >= 3;
-      n.vx = face * (knock ? 170 : isPole ? 110 : 140);
-      n.face = (-face) as 1 | -1;
-      this.ev({ e: 'fx', k: 'hit', x: n.x - face * 4, y: n.y - 22 });
+      n.vx = hitDir * (knock ? 170 : isPole ? 110 : 140);
+      n.face = (-hitDir) as 1 | -1;
+      this.ev({ e: 'fx', k: 'hit', x: n.x - hitDir * 4, y: n.y - 22 });
       this.sfx(isPole || wdef ? 'hit' : 'kick');
       this.damageNpc(n, dmg, knock, p);
     }
@@ -549,7 +686,7 @@ export class Sim {
     n.y = p.in.y;
     n.z = 22;
     n.vz = 50;
-    n.vx = face * 240;
+    n.vx = face * 240 * (this.has(p, 'oszczep') ? 1.35 : 1);
     n.face = (-face) as 1 | -1;
     n.by = p.id;
     n.hitIds = [];
@@ -573,7 +710,7 @@ export class Sim {
     n.z += n.vz * dt;
     n.vz -= BODY_GRAVITY * dt;
     const thrower = n.by ? this.players[n.by] : undefined;
-    const dmg = thrower ? throwDmg(thrower.stats) : 15;
+    const dmg = thrower ? Math.round(throwDmg(thrower.stats) * (this.has(thrower, 'oszczep') ? 1.5 : 1)) : 15;
     for (const o of this.npcs) {
       if (o === n || UNHITTABLE.includes(o.state) || n.hitIds.includes(o.id)) continue;
       if (Math.abs(o.x - n.x) > 14 || Math.abs(o.y - n.y) > 12 || n.z > 30) continue;
@@ -604,7 +741,7 @@ export class Sim {
     it.y = p.in.y;
     it.z = 18 + p.in.z;
     it.vz = 40;
-    it.vx = face * ITEMS[it.kind].speed;
+    it.vx = face * ITEMS[it.kind].speed * (this.has(p, 'oszczep') ? 1.35 : 1);
     it.by = p.id;
     it.byNpc = -1;
     it.hitIds = [];
@@ -705,7 +842,7 @@ export class Sim {
     const def = ITEMS[it.kind];
     if (it.by) {
       const thrower = this.players[it.by];
-      const dmg = throwDmg(thrower.stats) + def.dmg;
+      const dmg = Math.round((throwDmg(thrower.stats) + def.dmg) * (this.has(thrower, 'oszczep') ? 1.5 : 1));
       for (const n of this.npcs) {
         if (UNHITTABLE.includes(n.state) || it.hitIds.includes(n.id)) continue;
         if (Math.abs(n.x - it.x) > 12 || Math.abs(n.y - it.y) > 12) continue;
@@ -835,7 +972,7 @@ export class Sim {
       return;
     }
     if (!p.in.act) p.latch = false;
-    if (p.latch) return;
+    if (p.latch || p.shop) return;
     if (!p.in.act) {
       // puszczony przycisk: postęp powoli maleje
       p.prog = Math.max(0, p.prog - dt * 0.25);
@@ -849,6 +986,7 @@ export class Sim {
       p.prog = 0;
       p.kind = kind;
       p.actTarget = target;
+      p.grace = false;
     }
     if (!kind) return;
 
@@ -865,7 +1003,9 @@ export class Sim {
     }
     if (kind === 'lockpick' && this.rng() < dt * 6) this.sfx('pick');
 
-    const time = ACT_TIME[kind] * (HANDY.includes(kind) ? sneakTimeMult(p.stats) : 1);
+    let time = ACT_TIME[kind] * (HANDY.includes(kind) ? sneakTimeMult(p.stats) : 1);
+    if (kind === 'loot' && this.has(p, 'krawaciarz')) time *= 0.5;
+    if (kind === 'revive' && this.has(p, 'klepniecie')) time *= 0.5;
     p.prog += dt / time;
     if (p.prog < 1) return;
     p.prog = 0;
@@ -876,9 +1016,17 @@ export class Sim {
   /** Sprawdza, czy ktoś widzi gracza przy cichej robocie. Jeśli tak — rage. */
   private caught(p: PlayerSim, kind: ActKind): boolean {
     for (const n of this.npcs) {
-      if (n.rage || DISABLED.includes(n.state)) continue;
+      if (n.rage || n.blindT > 0 || DISABLED.includes(n.state)) continue;
       const range = n.role === 'guard' ? 170 : 110;
       if (!this.sees(n, p.in.x, p.in.y, range)) continue;
+      // Brzytwa: pierwsze spojrzenie nic nie zauważa
+      if (this.has(p, 'brzytwa') && !p.grace) {
+        p.grace = true;
+        n.blindT = 1.6;
+        n.alertT = 1;
+        this.txt('?!', n.x, n.y - 50, '#ffe040');
+        return false;
+      }
       p.prog = 0;
       p.kind = '';
       this.sfx('alert');
@@ -910,7 +1058,7 @@ export class Sim {
       case 'loot': {
         if (!n) return;
         n.looted = true;
-        const amount = n.kind === 'polizei' ? this.randi(60, 120) : this.randi(10, 50);
+        const amount = Math.round((n.kind === 'polizei' ? this.randi(60, 120) : this.randi(10, 50)) * (this.has(p, 'krawaciarz') ? 1.5 : 1));
         this.money += amount;
         this.sfx('coin');
         this.txt(`+${amount}€`, n.x, n.y - 30, '#ffe040');
@@ -946,7 +1094,7 @@ export class Sim {
         const other = this.mate(p);
         other.down = false;
         other.hp = Math.ceil(maxHp(other.stats) / 2);
-        other.invuln = 1.5;
+        other.invuln = this.has(p, 'klepniecie') ? 3.5 : 1.5;
         this.sfx('pickup');
         this.txt('f.revive', other.in.x, other.in.y - 44, '#7dff7d');
         break;
@@ -1005,6 +1153,7 @@ export class Sim {
   // -------------------------------------------------------------------------
   private updateNpc(n: Npc, dt: number) {
     n.alertT = Math.max(0, n.alertT - dt);
+    n.blindT = Math.max(0, n.blindT - dt);
     n.atkCd = Math.max(0, n.atkCd - dt);
     n.comboT = Math.max(0, n.comboT - dt);
     if (n.comboT <= 0) n.combo = 0;
@@ -1397,6 +1546,9 @@ export class Sim {
       kd: Math.round(p.kd * 100) / 100,
       hold: this.holdKind(p),
       st: statsToArray(p.stats),
+      tc: p.techs,
+      inv: [...p.inv],
+      shop: p.shop,
     });
     const ev = this.events;
     this.events = [];

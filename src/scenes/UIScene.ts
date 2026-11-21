@@ -93,7 +93,7 @@ export class UIScene extends Phaser.Scene {
       this.game_.events.off('level', this.levelBanner, this);
       this.game_.events.off('stage');
       controls.touchX = controls.touchY = 0;
-      controls.touchAct = controls.touchAtk = controls.touchJump = false;
+      controls.touchAct = controls.touchAtk = controls.touchJump = controls.touchAtkHeld = false;
     });
 
     if (isTouchDevice()) this.createTouch();
@@ -155,10 +155,15 @@ export class UIScene extends Phaser.Scene {
     jump.on('pointerout', () => jump.setScale(1));
     atk.on('pointerdown', () => {
       controls.touchAtk = true;
+      controls.touchAtkHeld = true;
       atk.setScale(0.9);
     });
-    atk.on('pointerup', () => atk.setScale(1));
-    atk.on('pointerout', () => atk.setScale(1));
+    const atkUp = () => {
+      controls.touchAtkHeld = false;
+      atk.setScale(1);
+    };
+    atk.on('pointerup', atkUp);
+    atk.on('pointerout', atkUp);
     act.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.actId = p.id;
       controls.touchAct = true;
@@ -187,8 +192,11 @@ export class UIScene extends Phaser.Scene {
     this.input.on('pointerup', up);
     this.input.on('pointerupoutside', up);
 
+    // pauza / status
+    const pause = txt(this, 920, 92, 'II', 28, '#ffffff', 5).setInteractive();
+    pause.on('pointerup', () => this.game_.togglePause(!this.game_.paused));
     // pełny ekran
-    const fs = txt(this, 920, 92, '⛶', 30, '#ffffff', 4).setInteractive();
+    const fs = txt(this, 870, 92, '⛶', 30, '#ffffff', 4).setInteractive();
     fs.on('pointerup', () => {
       if (this.scale.isFullscreen) this.scale.stopFullscreen();
       else this.scale.startFullscreen();

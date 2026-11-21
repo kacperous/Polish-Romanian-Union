@@ -7,6 +7,8 @@ import { LobbyScene } from './scenes/LobbyScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 import { EndScene } from './scenes/EndScene';
+import { ShopScene } from './scenes/ShopScene';
+import { PauseScene } from './scenes/PauseScene';
 import { applyDocumentLang } from './i18n';
 
 async function start() {
@@ -33,7 +35,7 @@ async function start() {
     audio: {
       disableWebAudio: false,
     },
-    scene: [BootScene, MenuScene, JoinScene, LobbyScene, GameScene, UIScene, EndScene],
+    scene: [BootScene, MenuScene, JoinScene, LobbyScene, GameScene, UIScene, EndScene, ShopScene, PauseScene],
   });
   (window as unknown as { __game: Phaser.Game }).__game = game;
 }

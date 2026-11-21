@@ -23,6 +23,8 @@ import { Sim } from '../game/Sim';
 import { PROLOG } from '../game/data/areas';
 import { ITEMS } from '../game/data/items';
 import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
+import { CHARGE_TIME, hasTech } from '../game/data/techniques';
+import type { ShopId } from '../game/data/shops';
 import {
   AtkKind,
   GameEvent,
@@ -146,6 +148,10 @@ export class GameScene extends Phaser.Scene {
   private lastTapDir = 0;
   private lastTapT = 0;
   private fullStickT = 0;
+  /** jak długo trzymany jest BIJ (ładowany cios) */
+  private chargeT = 0;
+  private chargeFx?: Phaser.GameObjects.Arc;
+  paused = false;
 
   private views: Record<CharId, CharView> = {} as never;
   private itemViews = new Map<number, { img: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image; spin: number }>();
@@ -183,6 +189,8 @@ export class GameScene extends Phaser.Scene {
     this.z = this.vz = 0;
     this.running = false;
     this.ak = 'n';
+    this.chargeT = 0;
+    this.paused = false;
     this.remoteInput = null;
     this.pendingEv = [];
     this.offs = [];
@@ -231,7 +239,7 @@ export class GameScene extends Phaser.Scene {
 
     // klawiatura
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,L,E,SPACE,Z,X,C,SHIFT,ESC') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,L,E,SPACE,Z,X,C,SHIFT,ESC,P') as Record<string, Phaser.Input.Keyboard.Key>;
     kb.addCapture('SPACE,UP,DOWN,LEFT,RIGHT');
 
     // sieć
@@ -239,6 +247,9 @@ export class GameScene extends Phaser.Scene {
       this.offs.push(
         net.on('relay', (d) => {
           if (d.k === 'in') this.remoteInput = d.i;
+          else if (d.k === 'buy') this.sim?.buy(this.other, String(d.g), d.m === 'take' ? 'take' : 'eat');
+          else if (d.k === 'use') this.sim?.useItem(this.other, Number(d.slot));
+          else if (d.k === 'leave_shop') this.sim?.leaveShop(this.other);
         }),
         net.on('peer_left', () => this.abort(t('err.mate_left'))),
         net.on('disconnected', () => this.abort(t('err.lost'))),
@@ -256,6 +267,8 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.offs.forEach((f) => f());
       this.scene.stop('UI');
+      this.scene.stop('Shop');
+      this.scene.stop('Pause');
     });
 
     playMusic(this, 'music_game', 0.28);
@@ -284,9 +297,10 @@ export class GameScene extends Phaser.Scene {
       mx = controls.touchX;
       my = controls.touchY;
     }
-    const atkPressed =
+    let atkPressed =
       Phaser.Input.Keyboard.JustDown(k.J) || Phaser.Input.Keyboard.JustDown(k.SPACE) || Phaser.Input.Keyboard.JustDown(k.Z) || controls.touchAtk;
     controls.touchAtk = false;
+    const atkHeld = k.J.isDown || k.SPACE.isDown || k.Z.isDown || controls.touchAtkHeld;
     const jumpPressed =
       Phaser.Input.Keyboard.JustDown(k.L) || Phaser.Input.Keyboard.JustDown(k.C) || Phaser.Input.Keyboard.JustDown(k.SHIFT) || controls.touchJump;
     controls.touchJump = false;
@@ -312,6 +326,12 @@ export class GameScene extends Phaser.Scene {
     if (!mx || (this.running && Math.sign(mx) !== this.face)) this.running = false;
 
     const ps = this.snap?.p[this.me];
+    // w sklepie / w menu pauzy postać stoi
+    if (ps?.shop || this.paused) {
+      mx = my = 0;
+      atkPressed = false;
+      this.running = false;
+    }
     const down = !!ps?.down;
     const inCar = !!ps?.inCar;
     // nad głową: wróg (1) albo ciężki przedmiot (2); broń (3) trzyma się w ręce
@@ -339,12 +359,27 @@ export class GameScene extends Phaser.Scene {
         this.z = 0.01;
         this.sound.play('swing', { volume: 0.15, rate: 1.6 });
       }
+      const cd = attackCooldown(this.me, st) * (this.me === 'romanian' && ps && hasTech(ps.tc, 'seria') ? 0.6 : 1);
       if (atkPressed && this.atkT <= 0) {
         this.atkSeq++;
         this.ak = holding ? 'n' : this.z > 0 ? 'j' : this.running ? 'r' : 'n';
-        this.atkT = attackCooldown(this.me, st);
+        this.atkT = cd;
+        this.chargeT = 0;
         if (this.ak === 'r') this.running = false;
       }
+      // ładowany cios (technika „Kamienna pięść”): przytrzymaj BIJ i puść
+      if (ps && hasTech(ps.tc, 'piesc') && !holding && this.z === 0) {
+        if (atkHeld && !this.paused && !ps.shop) this.chargeT += dt;
+        else {
+          if (this.chargeT >= CHARGE_TIME && this.atkT <= 0) {
+            this.atkSeq++;
+            this.ak = 'c';
+            this.atkT = cd * 1.5;
+            this.cameras.main.shake(90, 0.006);
+          }
+          this.chargeT = 0;
+        }
+      } else this.chargeT = 0;
       const air = this.z > 0;
       if (air) anim = this.atkT > 0 ? 'jatk' : 'jump';
       else if (this.atkT > 0) anim = 'atk';
@@ -400,13 +435,42 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  // --- sklep, ekwipunek, pauza ------------------------------------------------
+  requestBuy(good: string, mode: 'eat' | 'take') {
+    if (this.sim) this.sim.buy(this.me, good, mode);
+    else net.send({ k: 'buy', g: good, m: mode });
+  }
+
+  requestUse(slot: number) {
+    if (this.sim) this.sim.useItem(this.me, slot);
+    else net.send({ k: 'use', slot });
+  }
+
+  leaveShop() {
+    if (this.sim) this.sim.leaveShop(this.me);
+    else net.send({ k: 'leave_shop' });
+  }
+
+  togglePause(on: boolean) {
+    if (this.ended) return;
+    this.paused = on;
+    if (on) this.scene.launch('Pause', { game: this });
+    else this.scene.stop('Pause');
+  }
+
+  quitToMenu() {
+    if (this.data0.mode !== 'solo') net.leave();
+    this.scene.stop('Pause');
+    this.scene.start('Menu');
+  }
+
   update(_t: number, dms: number) {
     const dt = Math.min(0.05, dms / 1000);
-    if (this.keys.ESC && Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (this.data0.mode !== 'solo') net.leave();
-      this.scene.start('Menu');
-      return;
+    if ((Phaser.Input.Keyboard.JustDown(this.keys.ESC) || Phaser.Input.Keyboard.JustDown(this.keys.P)) && !this.snap?.p[this.me].shop) {
+      this.togglePause(!this.paused);
     }
+    // w solo pauza zatrzymuje świat
+    if (this.paused && this.data0.mode === 'solo') return;
     const input = this.localInput(dt);
 
     if (this.sim) {
@@ -488,6 +552,23 @@ export class GameScene extends Phaser.Scene {
       case 'stage':
         this.events.emit('stage', e.stage);
         break;
+      case 'shop':
+        if (e.who === this.me) {
+          if (e.shop) {
+            this.togglePause(false);
+            this.scene.launch('Shop', { game: this, shop: e.shop as ShopId });
+          } else this.scene.stop('Shop');
+        }
+        break;
+      case 'eat': {
+        const v = this.views[e.who];
+        this.floatText(t(`good.${e.good}`), v.x, v.y - 50, '#ffffff');
+        e.ups.forEach((u, i) => {
+          const [k, n] = u.split('+');
+          this.time.delayedCall(250 * (i + 1), () => this.floatText(`${t(`stat.${k}.s`)} +${n}`, v.x, v.y - 50, '#7dff7d'));
+        });
+        break;
+      }
       case 'end':
         this.finish(e.win, e.reason);
         break;
@@ -546,7 +627,7 @@ export class GameScene extends Phaser.Scene {
         v.setVisible(false);
         continue;
       }
-      if (ps?.inCar) {
+      if (ps?.inCar || ps?.shop) {
         v.setVisible(false);
         continue;
       }
@@ -556,6 +637,13 @@ export class GameScene extends Phaser.Scene {
         v.y = this.py;
         v.setAnim(ps?.down ? 'down' : input.anim);
         v.place(this.face, !!ps?.down || this.kdT > 0, this.z);
+        if (this.chargeT >= CHARGE_TIME) {
+          if (!this.chargeFx) this.chargeFx = this.add.circle(0, 0, 14, 0xffe040, 0.35).setStrokeStyle(2, 0xffffff, 0.8);
+          this.chargeFx.setPosition(v.x, v.y - 18 - this.z).setDepth(v.y + 2).setScale(1 + Math.sin(this.time.now / 60) * 0.12);
+        } else if (this.chargeFx) {
+          this.chargeFx.destroy();
+          this.chargeFx = undefined;
+        }
         // mruganie przy nietykalności
         v.sprite.setAlpha(this.hurtT > 0 ? 0.6 : 1);
       } else if (ps) {

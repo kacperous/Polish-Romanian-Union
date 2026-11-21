@@ -45,6 +45,12 @@ export interface PlayerSnap {
   hold: HoldKind;
   /** statystyki (kolejność STAT_IDS) */
   st: number[];
+  /** techniki (bity TECH_IDS) */
+  tc: number;
+  /** ekwipunek (id towarów) */
+  inv: string[];
+  /** sklep, w którym jest gracz */
+  shop: string;
 }
 
 export const NF_RAGE = 1;
@@ -79,6 +85,8 @@ export type GameEvent =
   | { e: 'hurt'; who: CharId; dx: number; kd?: number }
   | { e: 'msg'; s: string; who?: CharId; a?: Record<string, string> }
   | { e: 'stage'; stage: number }
+  | { e: 'shop'; who: CharId; shop: string }
+  | { e: 'eat'; who: CharId; good: string; ups: string[] }
   | { e: 'end'; win: boolean; reason: string };
 
 export interface Snapshot {
