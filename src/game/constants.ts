@@ -10,10 +10,31 @@ export const WALK_TOP = 160;
 export const WALK_BOTTOM = 262;
 
 export const PLAYER_SPEED = 78;
-export const PLAYER_MAX_HP = 12;
+/** Życie gracza bez statystyk (kratki × 10) — patrz stats.ts. */
+export const PLAYER_MAX_HP = 120;
 
 export type CharId = 'pole' | 'romanian';
-export type NpcKind = 'herr' | 'frau' | 'jogger' | 'opa' | 'gartner' | 'boss' | 'polizei';
+export type NpcKind =
+  | 'herr'
+  | 'frau'
+  | 'jogger'
+  | 'opa'
+  | 'gartner'
+  | 'boss'
+  | 'polizei'
+  // Rozdział II: bandy, sklepikarze, bossowie
+  | 'kontroler'
+  | 'pfandler'
+  | 'ultra'
+  | 'beamter'
+  | 'halina'
+  | 'costel'
+  | 'b_fahr'
+  | 'b_gunther'
+  | 'b_paul'
+  | 'b_thorsten'
+  | 'b_paragraf'
+  | 'b_klaus';
 
 /** Poziomy (od prawej do lewej). index 0 = pierwszy poziom (prawa strona świata). */
 export const LEVELS = [
@@ -29,7 +50,21 @@ export const ANIM_FRAMES = {
   hurt: [9],
   down: [10],
   act: [11, 12],
+  run: [2, 3, 4, 5],
+  jump: [13],
+  jatk: [14],
+  block: [15],
+  hold: [16, 17],
 } as const;
+
+/** Liczba klatek w arkuszu postaci. */
+export const CHAR_FRAMES = 18;
+
+/** Fizyka skoku (oś z = wysokość nad ziemią). */
+export const JUMP_V = 210;
+export const GRAVITY = 720;
+export const RUN_MULT = 1.7;
+export const HOLD_MULT = 0.75;
 
 export type AnimName = keyof typeof ANIM_FRAMES;
 

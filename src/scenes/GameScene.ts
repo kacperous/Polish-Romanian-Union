@@ -3,10 +3,13 @@ import { t } from '../i18n';
 import {
   AnimName,
   CharId,
+  GRAVITY,
+  HOLD_MULT,
+  JUMP_V,
+  RUN_MULT,
   ITEM_POS,
   LEVELS,
   LEVEL_W,
-  PLAYER_SPEED,
   PLAYER_START,
   VIEW_H,
   VIEW_W,
@@ -17,7 +20,18 @@ import {
   gateMinX,
 } from '../game/constants';
 import { Sim } from '../game/Sim';
+import { PROLOG } from '../game/data/areas';
+import { CITY, CityAreaId, DOOR_Y } from '../game/data/city';
+import { CAR_Y, CityRules } from '../game/chapters/city';
+import { GNOME_SPOTS, NPC_PARAMS } from '../game/data/story';
+import type { DialogScene } from './DialogScene';
+import { markPrologDone, saveLocal } from '../game/save';
+import { ITEMS } from '../game/data/items';
+import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
+import { CHARGE_TIME, hasTech } from '../game/data/techniques';
+import type { ShopId } from '../game/data/shops';
 import {
+  AtkKind,
   GameEvent,
   GameStartData,
   NF_ALERT,
@@ -51,7 +65,10 @@ class CharView {
   ty = 0;
   x = 0;
   y = 0;
+  z = 0;
   seen = true;
+  /** wkurzenie po friendly fire (sekundy) */
+  angerT = 0;
 
   constructor(
     private scene: Phaser.Scene,
@@ -84,16 +101,17 @@ class CharView {
       .setDepth(9002);
   }
 
-  place(face: number, down: boolean) {
+  place(face: number, down: boolean, z = 0) {
     const x = Math.round(this.x);
     const y = Math.round(this.y);
-    this.sprite.setPosition(x, y).setFlipX(face < 0).setDepth(y + (down ? -20 : 0));
-    this.shadow.setPosition(x, y);
-    this.icon.setPosition(x + 2, y - 44);
-    this.stars.setPosition(x, y - 14);
-    this.anger.setPosition(x + 6 * face, y - 36);
-    this.steam.setPosition(x - 8 * face, y - 38);
-    this.label?.setPosition(x, y - 48);
+    const sy = y - Math.round(z);
+    this.sprite.setPosition(x, sy).setFlipX(face < 0).setDepth(y + (down && z <= 0 ? -20 : 0) + (z > 0 ? 0.5 : 0));
+    this.shadow.setPosition(x, y).setScale(z > 0 ? Math.max(0.5, 1 - z / 80) : 1);
+    this.icon.setPosition(x + 2, sy - 44);
+    this.stars.setPosition(x, sy - 14);
+    this.anger.setPosition(x + 6 * face, sy - 36);
+    this.steam.setPosition(x - 8 * face, sy - 38);
+    this.label?.setPosition(x, sy - 48);
   }
 
   setVisible(v: boolean) {
@@ -129,12 +147,27 @@ export class GameScene extends Phaser.Scene {
   private hurtT = 0;
   private knock = 0;
   private stepT = 0;
+  private z = 0;
+  private vz = 0;
+  private kdT = 0;
+  private ak: AtkKind = 'n';
+  private running = false;
+  private lastTapDir = 0;
+  private lastTapT = 0;
+  private fullStickT = 0;
+  /** jak długo trzymany jest BIJ (ładowany cios) */
+  private chargeT = 0;
+  private chargeFx?: Phaser.GameObjects.Arc;
+  paused = false;
 
   private views: Record<CharId, CharView> = {} as never;
+  private itemViews = new Map<number, { img: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image; spin: number }>();
+  private coinViews = new Map<number, Phaser.GameObjects.Image>();
   private npcViews = new Map<number, CharView>();
   private gnome!: Phaser.GameObjects.Image;
   private bike!: Phaser.GameObjects.Sprite;
-  private car!: Phaser.GameObjects.Sprite;
+  private car?: Phaser.GameObjects.Sprite;
+  private carShadow!: Phaser.GameObjects.Image;
   private far: Phaser.GameObjects.TileSprite[] = [];
   private progG!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -147,6 +180,16 @@ export class GameScene extends Phaser.Scene {
   private startTime = 0;
   stage = 0;
   levelSeen = 0;
+  /** rozdział: 1 — prolog, 2 — miasto */
+  chapter: 1 | 2 = 1;
+  /** szerokość bieżącego świata / obszaru */
+  worldW = WORLD_W;
+  /** bieżący obszar miasta i numer wejścia */
+  areaId = '';
+  areaSeq = 0;
+  /** obiekty tła bieżącego obszaru (niszczone przy zmianie) */
+  private worldObjs: Phaser.GameObjects.GameObject[] = [];
+  private hiddenGnome?: Phaser.GameObjects.Image;
 
   constructor() {
     super('Game');
@@ -160,35 +203,45 @@ export class GameScene extends Phaser.Scene {
     this.sim = null;
     this.ended = false;
     this.atkSeq = 0;
-    this.atkT = this.hurtT = this.knock = 0;
+    this.atkT = this.hurtT = this.knock = this.kdT = 0;
+    this.z = this.vz = 0;
+    this.running = false;
+    this.ak = 'n';
+    this.chargeT = 0;
+    this.paused = false;
     this.remoteInput = null;
     this.pendingEv = [];
     this.offs = [];
     this.npcViews = new Map();
+    this.itemViews = new Map();
+    this.coinViews = new Map();
     this.stage = 0;
     this.levelSeen = -1;
+    this.chapter = data.chapter ?? 1;
+    this.worldW = WORLD_W;
+    this.areaId = '';
+    this.areaSeq = 0;
+    this.worldObjs = [];
+    this.far = [];
     this.startTime = this.time.now;
-    controls.touchAtk = controls.touchAct = false;
+    controls.touchAtk = controls.touchAct = controls.touchJump = false;
     controls.touchX = controls.touchY = 0;
 
     const solo = data.mode === 'solo';
     if (data.mode !== 'guest') {
-      this.sim = new Sim({ pole: solo ? this.me === 'pole' : true, romanian: solo ? this.me === 'romanian' : true }, solo);
+      const present = { pole: solo ? this.me === 'pole' : true, romanian: solo ? this.me === 'romanian' : true };
+      this.sim =
+        this.chapter === 2
+          ? new Sim(present, solo, { progress: data.save?.progress, rules: (sim) => new CityRules(sim, data.save?.city) })
+          : new Sim(present, solo);
     }
 
     // świat
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
-    cam.setBounds(0, 0, WORLD_W, VIEW_H);
     cam.setRoundPixels(true);
-    this.far = [1, 2, 3].map((i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, `bg_far${i}`).setOrigin(0).setDepth(-100 + i));
-    LEVELS.forEach((lv, i) => this.add.image(lv.x0, 0, `bg_level${i + 1}`).setOrigin(0).setDepth(-50));
-
-    // przedmioty
-    this.gnome = this.add.image(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 'gnome').setOrigin(0.5, 1).setDepth(ITEM_POS.gnome.y);
-    this.bike = this.add.sprite(ITEM_POS.bike.x, ITEM_POS.bike.y, 'bike', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.bike.y);
-    this.car = this.add.sprite(ITEM_POS.car.x, ITEM_POS.car.y, 'car', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.car.y);
-    this.add.image(ITEM_POS.car.x, ITEM_POS.car.y, 'shadow').setScale(5, 2).setDepth(2).setName('carShadow');
+    if (this.chapter === 1) this.buildProlog();
+    else cam.setBounds(0, 0, VIEW_W * 2, VIEW_H);
 
     // gracze
     for (const c of ['pole', 'romanian'] as CharId[]) {
@@ -207,7 +260,7 @@ export class GameScene extends Phaser.Scene {
 
     // klawiatura
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,E,SPACE,Z,X,ESC') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,L,E,SPACE,Z,X,C,SHIFT,ESC,P') as Record<string, Phaser.Input.Keyboard.Key>;
     kb.addCapture('SPACE,UP,DOWN,LEFT,RIGHT');
 
     // sieć
@@ -215,6 +268,10 @@ export class GameScene extends Phaser.Scene {
       this.offs.push(
         net.on('relay', (d) => {
           if (d.k === 'in') this.remoteInput = d.i;
+          else if (d.k === 'buy') this.sim?.buy(this.other, String(d.g), d.m === 'take' ? 'take' : 'eat');
+          else if (d.k === 'use') this.sim?.useItem(this.other, Number(d.slot));
+          else if (d.k === 'leave_shop') this.sim?.leaveShop(this.other);
+          else if (d.k === 'skip') this.sim?.skipCutscene();
         }),
         net.on('peer_left', () => this.abort(t('err.mate_left'))),
         net.on('disconnected', () => this.abort(t('err.lost'))),
@@ -232,6 +289,9 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.offs.forEach((f) => f());
       this.scene.stop('UI');
+      this.scene.stop('Shop');
+      this.scene.stop('Pause');
+      this.scene.stop('Dialog');
     });
 
     playMusic(this, 'music_game', 0.28);
@@ -255,48 +315,133 @@ export class GameScene extends Phaser.Scene {
     if (k.D.isDown || k.RIGHT.isDown) mx += 1;
     if (k.W.isDown || k.UP.isDown) my -= 1;
     if (k.S.isDown || k.DOWN.isDown) my += 1;
-    if (controls.touchX || controls.touchY) {
+    const touchMove = !!(controls.touchX || controls.touchY);
+    if (touchMove) {
       mx = controls.touchX;
       my = controls.touchY;
     }
-    const atkPressed =
+    let atkPressed =
       Phaser.Input.Keyboard.JustDown(k.J) || Phaser.Input.Keyboard.JustDown(k.SPACE) || Phaser.Input.Keyboard.JustDown(k.Z) || controls.touchAtk;
     controls.touchAtk = false;
+    const atkHeld = k.J.isDown || k.SPACE.isDown || k.Z.isDown || controls.touchAtkHeld;
+    const jumpPressed =
+      Phaser.Input.Keyboard.JustDown(k.L) || Phaser.Input.Keyboard.JustDown(k.C) || Phaser.Input.Keyboard.JustDown(k.SHIFT) || controls.touchJump;
+    controls.touchJump = false;
     const actHeld = k.K.isDown || k.E.isDown || k.X.isDown || controls.touchAct;
 
+    // bieg: podwójne stuknięcie w bok (klawiatura) albo joystick wychylony do końca
+    const tapL = Phaser.Input.Keyboard.JustDown(k.A) || Phaser.Input.Keyboard.JustDown(k.LEFT);
+    const tapR = Phaser.Input.Keyboard.JustDown(k.D) || Phaser.Input.Keyboard.JustDown(k.RIGHT);
+    const now = this.time.now;
+    for (const [tap, dir] of [
+      [tapL, -1],
+      [tapR, 1],
+    ] as const) {
+      if (!tap) continue;
+      if (this.lastTapDir === dir && now - this.lastTapT < 280) this.running = true;
+      this.lastTapDir = dir;
+      this.lastTapT = now;
+    }
+    if (touchMove) {
+      this.fullStickT = Math.abs(controls.touchX) > 0.9 ? this.fullStickT + dt : 0;
+      if (this.fullStickT > 0.3) this.running = true;
+    }
+    if (!mx || (this.running && Math.sign(mx) !== this.face)) this.running = false;
+
     const ps = this.snap?.p[this.me];
+    // scenka dialogowa: BIJ / SKOK pomija, postać stoi
+    if (this.scene.isActive('Dialog')) {
+      if (atkPressed || jumpPressed) this.requestSkip();
+      mx = my = 0;
+      atkPressed = false;
+      this.running = false;
+    }
+    // w sklepie / w menu pauzy postać stoi
+    if (ps?.shop || this.paused) {
+      mx = my = 0;
+      atkPressed = false;
+      this.running = false;
+    }
     const down = !!ps?.down;
     const inCar = !!ps?.inCar;
+    // nad głową: wróg (1) albo ciężki przedmiot (2); broń (3) trzyma się w ręce
+    const holding = ps?.hold === 1 || ps?.hold === 2;
+    const st = ps ? statsFromArray(ps.st) : baseStats(this.me);
 
     this.atkT = Math.max(0, this.atkT - dt);
     this.hurtT = Math.max(0, this.hurtT - dt);
+    this.kdT = Math.max(0, this.kdT - dt);
     let anim: AnimName = 'idle';
+    const moving = !!(mx || my);
 
     if (down || inCar) {
       anim = 'down';
+      this.z = this.vz = 0;
+      this.running = false;
+    } else if (this.kdT > 0) {
+      anim = 'down';
+      this.running = false;
     } else if (this.hurtT > 0) {
       anim = 'hurt';
     } else {
+      if (jumpPressed && this.z === 0 && !holding) {
+        this.vz = JUMP_V;
+        this.z = 0.01;
+        this.sound.play('swing', { volume: 0.15, rate: 1.6 });
+      }
+      const cd = attackCooldown(this.me, st) * (this.me === 'romanian' && ps && hasTech(ps.tc, 'seria') ? 0.6 : 1);
       if (atkPressed && this.atkT <= 0) {
         this.atkSeq++;
-        this.atkT = this.me === 'pole' ? 0.34 : 0.26;
+        this.ak = holding ? 'n' : this.z > 0 ? 'j' : this.running ? 'r' : 'n';
+        this.atkT = cd;
+        this.chargeT = 0;
+        if (this.ak === 'r') this.running = false;
       }
-      if (this.atkT > 0) {
-        anim = 'atk';
-      } else if (actHeld && !(mx || my)) {
-        anim = 'act';
-      } else if (mx || my) {
-        const len = Math.hypot(mx, my) || 1;
-        const sp = PLAYER_SPEED * dt;
-        this.px += (mx / len) * sp * Math.min(1, Math.hypot(mx, my));
-        this.py += (my / len) * sp * 0.72 * Math.min(1, Math.hypot(mx, my));
-        if (Math.abs(mx) > 0.2) this.face = mx > 0 ? 1 : -1;
-        anim = 'walk';
-        this.stepT += dt;
-        if (this.stepT > 0.18) {
-          this.stepT = 0;
-          if (Math.random() < 0.35) this.spawnDust(this.px - this.face * 6, this.py);
+      // ładowany cios (technika „Kamienna pięść”): przytrzymaj BIJ i puść
+      if (ps && hasTech(ps.tc, 'piesc') && !holding && this.z === 0) {
+        if (atkHeld && !this.paused && !ps.shop) this.chargeT += dt;
+        else {
+          if (this.chargeT >= CHARGE_TIME && this.atkT <= 0) {
+            this.atkSeq++;
+            this.ak = 'c';
+            this.atkT = cd * 1.5;
+            this.cameras.main.shake(90, 0.006);
+          }
+          this.chargeT = 0;
         }
+      } else this.chargeT = 0;
+      const air = this.z > 0;
+      if (air) anim = this.atkT > 0 ? 'jatk' : 'jump';
+      else if (this.atkT > 0) anim = 'atk';
+      else if (holding) anim = 'hold';
+      else if (actHeld && !moving) anim = this.hasAction() ? 'act' : 'block';
+      else if (moving) anim = this.running ? 'run' : 'walk';
+      // na ziemi cios zatrzymuje w miejscu; w powietrzu można sterować
+      if (moving && (air || this.atkT <= 0) && anim !== 'act' && anim !== 'block') {
+        const len = Math.hypot(mx, my) || 1;
+        const mag = Math.min(1, Math.hypot(mx, my));
+        const sp = moveSpeed(st) * (this.running ? RUN_MULT : 1) * (holding ? HOLD_MULT : 1) * dt;
+        this.px += (mx / len) * sp * mag;
+        this.py += (my / len) * sp * 0.72 * mag;
+        if (Math.abs(mx) > 0.2) this.face = mx > 0 ? 1 : -1;
+        if (!air) {
+          this.stepT += dt;
+          if (this.stepT > (this.running ? 0.1 : 0.18)) {
+            this.stepT = 0;
+            if (Math.random() < (this.running ? 0.8 : 0.35)) this.spawnDust(this.px - this.face * 6, this.py);
+          }
+        }
+      }
+    }
+    // fizyka skoku
+    if (this.z > 0 || this.vz > 0) {
+      this.vz -= GRAVITY * dt;
+      this.z += this.vz * dt;
+      if (this.z <= 0) {
+        this.z = 0;
+        this.vz = 0;
+        this.spawnDust(this.px - 5, this.py);
+        this.spawnDust(this.px + 5, this.py);
       }
     }
     if (this.knock) {
@@ -305,26 +450,64 @@ export class GameScene extends Phaser.Scene {
       if (Math.abs(this.knock) < 0.5) this.knock = 0;
     }
     const stage = this.snap?.stage ?? 0;
-    this.px = Phaser.Math.Clamp(this.px, gateMinX(stage), WORLD_W - 8);
+    if (this.chapter === 1) this.px = Phaser.Math.Clamp(this.px, gateMinX(stage), WORLD_W - 8);
+    else this.px = Phaser.Math.Clamp(this.px, 6, this.worldW - 6);
     this.py = Phaser.Math.Clamp(this.py, WALK_TOP, WALK_BOTTOM);
 
     return {
       x: Math.round(this.px * 10) / 10,
       y: Math.round(this.py * 10) / 10,
+      z: Math.round(this.z),
       face: this.face,
       anim,
       atk: this.atkSeq,
-      act: actHeld && anim === 'act',
+      ak: this.ak,
+      act: actHeld && (anim === 'act' || anim === 'block' || anim === 'hold'),
+      ar: this.areaSeq,
     };
+  }
+
+  // --- sklep, ekwipunek, pauza ------------------------------------------------
+  requestBuy(good: string, mode: 'eat' | 'take') {
+    if (this.sim) this.sim.buy(this.me, good, mode);
+    else net.send({ k: 'buy', g: good, m: mode });
+  }
+
+  requestSkip() {
+    if (this.sim) this.sim.skipCutscene();
+    else net.send({ k: 'skip' });
+  }
+
+  requestUse(slot: number) {
+    if (this.sim) this.sim.useItem(this.me, slot);
+    else net.send({ k: 'use', slot });
+  }
+
+  leaveShop() {
+    if (this.sim) this.sim.leaveShop(this.me);
+    else net.send({ k: 'leave_shop' });
+  }
+
+  togglePause(on: boolean) {
+    if (this.ended) return;
+    this.paused = on;
+    if (on) this.scene.launch('Pause', { game: this });
+    else this.scene.stop('Pause');
+  }
+
+  quitToMenu() {
+    if (this.data0.mode !== 'solo') net.leave();
+    this.scene.stop('Pause');
+    this.scene.start('Menu');
   }
 
   update(_t: number, dms: number) {
     const dt = Math.min(0.05, dms / 1000);
-    if (this.keys.ESC && Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (this.data0.mode !== 'solo') net.leave();
-      this.scene.start('Menu');
-      return;
+    if ((Phaser.Input.Keyboard.JustDown(this.keys.ESC) || Phaser.Input.Keyboard.JustDown(this.keys.P)) && !this.snap?.p[this.me].shop) {
+      this.togglePause(!this.paused);
     }
+    // w solo pauza zatrzymuje świat
+    if (this.paused && this.data0.mode === 'solo') return;
     const input = this.localInput(dt);
 
     if (this.sim) {
@@ -356,6 +539,7 @@ export class GameScene extends Phaser.Scene {
   private onSnap(s: Snapshot) {
     const prevStage = this.snap?.stage ?? 0;
     this.snap = s;
+    if (s.city && s.city.seq !== this.areaSeq) this.enterArea(s.city.ar as CityAreaId, s.city.seq, s);
     for (const e of s.ev) this.handleEvent(e);
     if (s.stage !== prevStage) this.stage = s.stage;
   }
@@ -391,6 +575,11 @@ export class GameScene extends Phaser.Scene {
         if (e.who === this.me) {
           this.knock = e.dx;
           this.hurtT = 0.3;
+          this.running = false;
+          if (e.kd) {
+            this.kdT = e.kd;
+            this.hurtT = 0;
+          }
           this.cameras.main.shake(150, 0.008);
           this.cameras.main.flash(80, 255, 60, 60);
         }
@@ -401,6 +590,55 @@ export class GameScene extends Phaser.Scene {
       case 'stage':
         this.events.emit('stage', e.stage);
         break;
+      case 'area':
+        this.sound.play('pickup', { volume: 0.25, rate: 0.8 });
+        break;
+      case 'save':
+        if (this.sim && this.sim.rules instanceof CityRules) {
+          saveLocal({ v: 1, progress: this.sim.progress(), city: { ...this.sim.rules.state } });
+          this.events.emit('toast', t('m.saved'));
+        }
+        break;
+      case 'dialog':
+        this.togglePause(false);
+        if (this.scene.isActive('Dialog')) (this.scene.get('Dialog') as DialogScene).addLines(e.lines);
+        else this.scene.launch('Dialog', { game: this, lines: e.lines });
+        break;
+      case 'dialog_end':
+        this.scene.stop('Dialog');
+        break;
+      case 'ff': {
+        // friendly fire: trafiony kumpel się wkurza
+        const v = this.views[e.who];
+        v.angerT = 2.6;
+        this.sound.play('rage', { volume: 0.35, rate: 1.3 });
+        this.floatText(t(`ff.${e.who}.${Math.floor(Math.random() * 3)}`), v.x, v.y - 56, '#ff6060');
+        if (e.by === this.me) this.events.emit('toast', t('m.ff_hit'));
+        break;
+      }
+      case 'shake':
+        this.cameras.main.shake(300, 0.012);
+        break;
+      case 'cry':
+        this.floatText(t(`cry.${e.k}.${Math.floor(Math.random() * 3)}`), e.x, e.y - 52, '#ffb0b0');
+        break;
+      case 'shop':
+        if (e.who === this.me) {
+          if (e.shop) {
+            this.togglePause(false);
+            this.scene.launch('Shop', { game: this, shop: e.shop as ShopId });
+          } else this.scene.stop('Shop');
+        }
+        break;
+      case 'eat': {
+        const v = this.views[e.who];
+        this.floatText(t(`good.${e.good}`), v.x, v.y - 50, '#ffffff');
+        e.ups.forEach((u, i) => {
+          const [k, n] = u.split('+');
+          this.time.delayedCall(250 * (i + 1), () => this.floatText(`${t(`stat.${k}.s`)} +${n}`, v.x, v.y - 50, '#7dff7d'));
+        });
+        break;
+      }
       case 'end':
         this.finish(e.win, e.reason);
         break;
@@ -425,9 +663,11 @@ export class GameScene extends Phaser.Scene {
       net.send({ k: 'snap', s: { ...last, ev: [...this.pendingEv, ...last.ev] } });
       this.pendingEv = [];
     }
+    // ukończony prolog odblokowuje Rozdział II
+    const unlocked = win && this.chapter === 1 ? markPrologDone() : false;
     this.time.delayedCall(win ? 600 : 1800, () => {
       this.scene.stop('UI');
-      this.scene.start('End', { stats, mode: this.data0.mode, code: this.data0.code, me: this.me });
+      this.scene.start('End', { stats, mode: this.data0.mode, code: this.data0.code, me: this.me, unlocked });
     });
   }
 
@@ -459,7 +699,7 @@ export class GameScene extends Phaser.Scene {
         v.setVisible(false);
         continue;
       }
-      if (ps?.inCar) {
+      if (ps?.inCar || ps?.shop) {
         v.setVisible(false);
         continue;
       }
@@ -468,7 +708,14 @@ export class GameScene extends Phaser.Scene {
         v.x = this.px;
         v.y = this.py;
         v.setAnim(ps?.down ? 'down' : input.anim);
-        v.place(this.face, !!ps?.down);
+        v.place(this.face, !!ps?.down || this.kdT > 0, this.z);
+        if (this.chargeT >= CHARGE_TIME) {
+          if (!this.chargeFx) this.chargeFx = this.add.circle(0, 0, 14, 0xffe040, 0.35).setStrokeStyle(2, 0xffffff, 0.8);
+          this.chargeFx.setPosition(v.x, v.y - 18 - this.z).setDepth(v.y + 2).setScale(1 + Math.sin(this.time.now / 60) * 0.12);
+        } else if (this.chargeFx) {
+          this.chargeFx.destroy();
+          this.chargeFx = undefined;
+        }
         // mruganie przy nietykalności
         v.sprite.setAlpha(this.hurtT > 0 ? 0.6 : 1);
       } else if (ps) {
@@ -476,26 +723,31 @@ export class GameScene extends Phaser.Scene {
         v.x += (ps.x - v.x) * lerp;
         v.y += (ps.y - v.y) * lerp;
         v.setAnim(ps.anim);
-        v.place(ps.face, ps.down);
+        v.z += (ps.z - v.z) * Math.min(1, lerp * 1.5);
+        v.place(ps.face, ps.down || ps.kd > 0, v.z);
       }
-      v.stars.setVisible(!!ps?.down);
+      v.stars.setVisible(!!ps?.down || (c === this.me ? this.kdT > 0 : (ps?.kd ?? 0) > 0));
+      this.renderAnger(v, dt);
     }
 
     // NPC
     if (s) {
       const alive = new Set<number>();
-      for (const [id, kind, x, y, face, anim, f] of s.n) {
+      for (const [id, kind, x, y, face, anim, f, , z] of s.n) {
         alive.add(id);
         let v = this.npcViews.get(id);
         if (!v) {
           v = new CharView(this, `char_${kind}`, x, y);
+          const sc = NPC_PARAMS[kind].scale ?? 1;
+          v.sprite.setScale(sc);
+          v.shadow.setScale(sc);
           this.npcViews.set(id, v);
         }
         if (Math.abs(x - v.x) > 80) v.x = x;
         v.x += (x - v.x) * lerp;
         v.y += (y - v.y) * lerp;
         v.setAnim(anim);
-        v.place(face, !!(f & NF_KO));
+        v.place(face, anim === 'down', z);
         const rage = !!(f & NF_RAGE);
         if (rage) v.sprite.setTint(0xff7070);
         else if ((f & NF_ROBBED) && !(f & NF_KO)) v.sprite.setTint(0xd8d8ff);
@@ -519,14 +771,18 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // przedmioty
-      this.gnome.setVisible(!s.o.gnome);
-      this.bike.setVisible(!s.o.bike).setFrame(s.o.lockHp > 0 ? 0 : 1);
-      this.car.x = s.o.carX;
-      this.car.setFrame(s.o.carUnlocked ? 1 : 0);
-      const cs = this.children.getByName('carShadow') as Phaser.GameObjects.Image;
-      cs.x = s.o.carX;
-      if (s.o.carGone && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+      this.renderItems(s, dt);
+
+      if (s.city) this.renderCity(s);
+      // obiekty prologu
+      if (s.o && this.car) {
+        this.gnome.setVisible(!s.o.gnome);
+        this.bike.setVisible(!s.o.bike).setFrame(s.o.lockHp > 0 ? 0 : 1);
+        this.car.x = s.o.carX;
+        this.car.setFrame(s.o.carUnlocked ? 1 : 0);
+        this.carShadow.x = s.o.carX;
+        if (s.o.carGone && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+      }
 
       // paski postępu akcji
       this.progG.clear();
@@ -543,9 +799,9 @@ export class GameScene extends Phaser.Scene {
 
     // kamera: podąża za graczem (albo autem)
     let fx = this.px;
-    if (s?.p[this.me].inCar) fx = this.car.x;
+    if (s?.p[this.me].inCar && this.car) fx = this.car.x;
     const lead = this.face * 40;
-    const curMid = Phaser.Math.Clamp(cam.midPoint.x, VIEW_W / 2, WORLD_W - VIEW_W / 2);
+    const curMid = Phaser.Math.Clamp(cam.midPoint.x, VIEW_W / 2, this.worldW - VIEW_W / 2);
     const nx = curMid + (fx + lead - curMid) * Math.min(1, dt * 4);
     cam.centerOn(nx, VIEW_H / 2);
 
@@ -555,51 +811,282 @@ export class GameScene extends Phaser.Scene {
     this.far.forEach((f, i) => {
       f.setPosition(view.x, 0);
       f.tilePositionX = view.x * 0.25;
-      const lv = LEVELS[i];
-      const center = (lv.x0 + lv.x1) / 2;
-      const a = Phaser.Math.Clamp(1.5 - Math.abs(mid - center) / (LEVEL_W / 2), 0, 1);
-      f.setAlpha(i === 0 ? 1 : a);
+      if (this.chapter === 1) {
+        const lv = LEVELS[i];
+        const center = (lv.x0 + lv.x1) / 2;
+        const a = Phaser.Math.Clamp(1.5 - Math.abs(mid - center) / (LEVEL_W / 2), 0, 1);
+        f.setAlpha(i === 0 ? 1 : a);
+      }
     });
 
-    // baner poziomu
-    const lvl = LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
-    if (lvl >= 0 && lvl > this.levelSeen) {
-      this.levelSeen = lvl;
-      this.events.emit('level', lvl);
+    // baner poziomu (prolog)
+    if (this.chapter === 1) {
+      const lvl = LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
+      if (lvl >= 0 && lvl > this.levelSeen) {
+        this.levelSeen = lvl;
+        this.events.emit('level', lvl);
+      }
+    }
+  }
+
+  /** Animacja wkurzenia gracza (friendly fire): czerwienieje, drży, tupie, para z uszu. */
+  private renderAnger(v: CharView, dt: number) {
+    if (v.angerT <= 0) return;
+    v.angerT -= dt;
+    if (v.angerT <= 0) {
+      v.sprite.clearTint();
+      v.anger.setVisible(false);
+      v.steam.setVisible(false);
+      return;
+    }
+    const flick = Math.floor(this.time.now / 90) % 2 === 0;
+    v.sprite.setTint(flick ? 0xff5050 : 0xffa0a0);
+    v.sprite.x += Math.round(Math.sin(this.time.now / 22) * 1.5);
+    v.anger.setVisible(true).setScale(1 + Math.abs(Math.sin(this.time.now / 120)) * 0.4);
+    v.steam.setVisible(true);
+    if (Math.random() < dt * 5) this.spawnDust(v.x + Phaser.Math.Between(-6, 6), v.y);
+  }
+
+  // --- świat ------------------------------------------------------------------
+  private buildProlog() {
+    this.worldW = PROLOG.w;
+    this.cameras.main.setBounds(0, 0, PROLOG.w, VIEW_H);
+    this.far = PROLOG.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
+    PROLOG.bgs.forEach((b) => this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
+    this.gnome = this.add.image(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 'gnome').setOrigin(0.5, 1).setDepth(ITEM_POS.gnome.y);
+    this.bike = this.add.sprite(ITEM_POS.bike.x, ITEM_POS.bike.y, 'bike', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.bike.y);
+    this.car = this.add.sprite(ITEM_POS.car.x, ITEM_POS.car.y, 'car', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.car.y);
+    this.carShadow = this.add.image(ITEM_POS.car.x, ITEM_POS.car.y, 'shadow').setScale(5, 2).setDepth(2);
+  }
+
+  /** Buduje obszar miasta (Rozdział II) i przenosi lokalnego gracza na pozycję z symulacji. */
+  private enterArea(id: CityAreaId, seq: number, s: Snapshot) {
+    const a = CITY[id];
+    this.areaId = id;
+    this.areaSeq = seq;
+    this.worldW = a.w;
+    this.worldObjs.forEach((o) => o.destroy());
+    this.far.forEach((f) => f.destroy());
+    this.worldObjs = [];
+    this.hiddenGnome = undefined;
+    this.car = undefined;
+    this.far = a.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
+    for (const b of a.bgs) this.worldObjs.push(this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
+    // widoki NPC / przedmiotów z poprzedniego obszaru
+    for (const v of this.npcViews.values()) v.destroy();
+    this.npcViews.clear();
+    for (const v of this.itemViews.values()) {
+      v.img.destroy();
+      v.shadow.destroy();
+    }
+    this.itemViews.clear();
+    for (const c of this.coinViews.values()) c.destroy();
+    this.coinViews.clear();
+    const me = s.p[this.me];
+    this.px = me.x;
+    this.py = me.y;
+    this.face = me.face;
+    this.z = this.vz = 0;
+    this.running = false;
+    this.knock = 0;
+    for (const c of ['pole', 'romanian'] as CharId[]) {
+      this.views[c].x = s.p[c].x;
+      this.views[c].y = s.p[c].y;
+    }
+    const cam = this.cameras.main;
+    cam.setBounds(0, 0, a.w, VIEW_H);
+    cam.centerOn(Phaser.Math.Clamp(this.px, VIEW_W / 2, a.w - VIEW_W / 2), VIEW_H / 2);
+    this.events.emit('area', id);
+  }
+
+  /** Obiekty miasta: ukryty krasnal, auto w finale. */
+  private renderCity(s: Snapshot) {
+    const c = s.city!;
+    const spot = GNOME_SPOTS[c.ar as CityAreaId];
+    if (spot && !this.hiddenGnome) {
+      this.hiddenGnome = this.add.image(spot.x, DOOR_Y - 2, 'gnome').setOrigin(0.5, 1).setDepth(DOOR_Y - 2);
+      this.worldObjs.push(this.hiddenGnome);
+    }
+    if (spot && this.hiddenGnome) {
+      const found = !!(c.gnomes & (1 << spot.bit));
+      this.hiddenGnome.setVisible(!found);
+      if (!found && Math.random() < 0.02) this.floatText('✦', spot.x + Phaser.Math.Between(-6, 6), DOOR_Y - 26, '#fff4a0');
+    }
+    if (c.car) {
+      if (!this.car) {
+        this.car = this.add.sprite(c.car[0], CAR_Y, 'car', 1).setOrigin(0.5, 1).setDepth(CAR_Y);
+        this.carShadow = this.add.image(c.car[0], CAR_Y, 'shadow').setScale(5, 2).setDepth(2);
+        this.worldObjs.push(this.car, this.carShadow);
+      }
+      this.car.x = c.car[0];
+      this.carShadow.x = c.car[0];
+      if (c.car[1] && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+    }
+  }
+
+  /** Przedmioty z ulicy i monety na ziemi. */
+  private renderItems(s: Snapshot, dt: number) {
+    const lerp = Math.min(1, dt * 14);
+    const seen = new Set<number>();
+    for (const [id, kind, x, y, z, holder, thrown] of s.it) {
+      seen.add(id);
+      let v = this.itemViews.get(id);
+      const tex = kind === 'gnome' ? 'gnome' : `it_${kind}`;
+      if (!v) {
+        v = { img: this.add.image(x, y, tex).setOrigin(0.5, 1), shadow: this.add.image(x, y, 'shadow').setScale(0.6).setDepth(1), spin: 0 };
+        v.img.setData('x', x).setData('y', y).setData('z', z);
+        this.itemViews.set(id, v);
+      }
+      const weapon = ITEMS[kind].type === 'weapon';
+      // pozycja: trzymany przez gracza — za widokiem postaci (płynnie); reszta — ze snapshotu
+      let ix: number;
+      let iy: number;
+      let iz: number;
+      let face = 1;
+      let anim: AnimName = 'idle';
+      if (holder === 1 || holder === 2) {
+        const c: CharId = holder === 1 ? 'pole' : 'romanian';
+        const cv = this.views[c];
+        ix = cv.x;
+        iy = cv.y;
+        iz = c === this.me ? this.z : cv.z;
+        face = c === this.me ? this.face : s.p[c].face;
+        anim = cv.anim || 'idle';
+      } else {
+        const px = v.img.getData('x') as number;
+        const py = v.img.getData('y') as number;
+        const pz = v.img.getData('z') as number;
+        const far = Math.abs(x - px) > 60;
+        ix = far ? x : px + (x - px) * lerp;
+        iy = far ? y : py + (y - py) * lerp;
+        iz = far ? z : pz + (z - pz) * lerp;
+        v.img.setData('x', ix).setData('y', iy).setData('z', iz);
+      }
+      const img = v.img;
+      img.setFlipX(false).setRotation(0);
+      // NPC: snapshot ma już wysokość trzymania — liczymy od jego stóp
+      const hz = holder === 3 ? 0 : iz;
+      if (holder !== 0 && weapon) {
+        // broń w dłoni
+        const ang = anim === 'atk' ? 15 : anim === 'jatk' ? 35 : anim === 'block' ? -95 : -55;
+        img.setOrigin(0.12, 0.5).setFlipX(face < 0);
+        if (face < 0) img.setOrigin(0.88, 0.5);
+        img.setRotation(Phaser.Math.DegToRad(ang) * face);
+        img.setPosition(Math.round(ix + face * 8), Math.round(iy - 17 - hz)).setDepth(iy + 1);
+        v.shadow.setVisible(false);
+      } else if (holder !== 0) {
+        // nad głową
+        img.setOrigin(0.5, 1).setPosition(Math.round(ix), Math.round(iy - 26 - hz)).setDepth(iy + 1);
+        v.shadow.setVisible(false);
+      } else {
+        img.setOrigin(0.5, 1).setPosition(Math.round(ix), Math.round(iy - iz)).setDepth(iy);
+        if (thrown && (kind === 'tire' || kind === 'bottle' || weapon)) {
+          v.spin += dt * 14;
+          img.setOrigin(0.5, 0.5).setRotation(v.spin).setY(Math.round(iy - iz - img.height / 2));
+        }
+        v.shadow.setVisible(true).setPosition(Math.round(ix), Math.round(iy));
+      }
+    }
+    for (const [id, v] of this.itemViews) {
+      if (seen.has(id)) continue;
+      v.img.destroy();
+      v.shadow.destroy();
+      this.itemViews.delete(id);
+    }
+    const seenC = new Set<number>();
+    for (const [id, x, y, left] of s.co) {
+      seenC.add(id);
+      let c = this.coinViews.get(id);
+      if (!c) {
+        c = this.add.image(x, y - 3, 'coin').setDepth(y);
+        this.coinViews.set(id, c);
+        this.tweens.add({ targets: c, y: y - 12, duration: 180, yoyo: true, ease: 'Quad.out' });
+      }
+      c.setVisible(left > 3 || Math.floor(this.time.now / 120) % 2 === 0);
+    }
+    for (const [id, c] of this.coinViews) {
+      if (seenC.has(id)) continue;
+      c.destroy();
+      this.coinViews.delete(id);
     }
   }
 
   /** Podpowiedź dla lokalnego gracza — co zrobi AKCJA w tym miejscu. */
   actionHint(): string {
-    const s = this.snap;
-    if (!s) return '';
-    const me = s.p[this.me];
-    if (me.down) return t('hint.down');
-    if (me.inCar) return t('hint.in_car');
-    const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
-    const o = s.p[this.other];
-    if (o.present && o.down && near(o.x, o.y, 28, 16)) return t('hint.revive');
-    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return t('hint.gnome');
-    if (s.stage === 1 && !s.o.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
-      if (s.o.lockHp > 0) return this.me === 'romanian' ? t('hint.lockpick') : t('hint.smash');
-      return t('hint.bike');
-    }
-    if (s.stage === 2 && !s.o.carGone && near(s.o.carX, ITEM_POS.car.y, 56, 22)) {
-      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? t('hint.carlock') : t('hint.lookout');
-      return t('hint.enter');
-    }
-    for (const [, , x, y, face, , f] of s.n) {
-      if (!near(x, y, 36, 14)) continue;
-      if (f & NF_KO) return f & NF_LOOTED ? '' : t('hint.loot');
-      if (this.me === 'romanian' && !(f & (NF_ROBBED | NF_RAGE))) {
-        return face * (this.px - x) < 0 ? t('hint.pick') : t('hint.facing');
-      }
-    }
-    return '';
+    return this.actionInfo().text;
   }
 
-  /** Indeks poziomu, na którym stoi lokalny gracz. */
+  /** Czy AKCJA zrobi coś w tym miejscu (inaczej przytrzymanie AKCJI to blok). */
+  hasAction(): boolean {
+    return this.actionInfo().act;
+  }
+
+  private actionInfo(): { text: string; act: boolean } {
+    const s = this.snap;
+    const none = { text: '', act: false };
+    if (!s) return none;
+    const yes = (k: string, a?: Record<string, string>) => ({ text: t(k, a), act: true });
+    const info = (k: string) => ({ text: t(k), act: false });
+    const me = s.p[this.me];
+    if (me.down) return info('hint.down');
+    if (me.inCar) return info('hint.in_car');
+    if (me.hold === 1) return yes('hint.holding');
+    if (me.hold === 2) return yes('hint.holding_item');
+    if (me.hold === 3) return yes('hint.weapon');
+    const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
+    const o = s.p[this.other];
+    if (o.present && o.down && near(o.x, o.y, 28, 16)) return yes('hint.revive');
+    const ob = s.o;
+    if (ob) {
+      if (s.stage === 0 && !ob.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return yes('hint.gnome');
+      if (s.stage === 1 && !ob.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
+        if (ob.lockHp > 0) return this.me === 'romanian' ? yes('hint.lockpick') : info('hint.smash');
+        return yes('hint.bike');
+      }
+      if (s.stage === 2 && !ob.carGone && near(ob.carX, ITEM_POS.car.y, 56, 22)) {
+        if (!ob.carUnlocked) return this.me === 'romanian' || !o.present ? yes('hint.carlock') : info('hint.lookout');
+        return yes('hint.enter');
+      }
+    }
+    if (s.city?.car && !s.city.car[1] && near(s.city.car[0], CAR_Y, 56, 22)) return yes('hint.enter');
+    const gs = s.city ? GNOME_SPOTS[s.city.ar as CityAreaId] : undefined;
+    if (s.city && gs && !(s.city.gnomes & (1 << gs.bit)) && this.py <= DOOR_Y + 14 && Math.abs(this.px - gs.x) < 16) return yes('hint.gnome2');
+    if (s.city && this.py <= DOOR_Y + 14) {
+      for (const pr of CITY[s.city.ar as CityAreaId].props) {
+        if (pr.kind === 'door' && Math.abs(this.px - pr.x) < 16) return yes('hint.shop', { s: `shopname.${pr.shop}` });
+        if (pr.kind === 'pfand' && Math.abs(this.px - pr.x) < 18) {
+          const bottle = s.it.some(([, k, , , , h]) => k === 'bottle' && h === (this.me === 'pole' ? 1 : 2));
+          return bottle ? yes('hint.pfand') : info('h.pfand');
+        }
+      }
+    }
+    for (const [, , x, y, , anim, f, , z] of s.n) {
+      if (anim === 'down' && !(f & NF_KO) && z === 0 && near(x, y, 30, 14)) return yes('hint.lift');
+    }
+    for (const [, kind, x, y, z, holder] of s.it) {
+      if (holder === 0 && z === 0 && near(x, y, 18, 12)) return yes('hint.pickup', { i: `item.${kind}` });
+    }
+    for (const [, kind, x, y, face, , f] of s.n) {
+      if (kind === 'halina' || kind === 'costel' || !near(x, y, 36, 14)) continue;
+      if (f & NF_KO) {
+        if (f & NF_LOOTED) continue;
+        return yes('hint.loot');
+      }
+      if (this.me === 'romanian' && !(f & (NF_ROBBED | NF_RAGE))) {
+        return face * (this.px - x) < 0 ? yes('hint.pick') : info('hint.facing');
+      }
+    }
+    return none;
+  }
+
+  /** Indeks poziomu prologu, na którym stoi lokalny gracz (-1 w mieście). */
   playerLevel(): number {
+    if (this.chapter !== 1) return -1;
     return LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
+  }
+
+  /** Pozycja lokalnego gracza (dla HUD). */
+  localPos() {
+    return { x: this.px, y: this.py };
   }
 }
