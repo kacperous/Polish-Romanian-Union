@@ -17,6 +17,7 @@ import {
   gateMinX,
 } from '../game/constants';
 import { Sim } from '../game/Sim';
+import { PROLOG } from '../game/data/areas';
 import {
   GameEvent,
   GameStartData,
@@ -181,8 +182,8 @@ export class GameScene extends Phaser.Scene {
     cam.setZoom(ZOOM);
     cam.setBounds(0, 0, WORLD_W, VIEW_H);
     cam.setRoundPixels(true);
-    this.far = [1, 2, 3].map((i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, `bg_far${i}`).setOrigin(0).setDepth(-100 + i));
-    LEVELS.forEach((lv, i) => this.add.image(lv.x0, 0, `bg_level${i + 1}`).setOrigin(0).setDepth(-50));
+    this.far = PROLOG.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
+    PROLOG.bgs.forEach((b) => this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
 
     // przedmioty
     this.gnome = this.add.image(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 'gnome').setOrigin(0.5, 1).setDepth(ITEM_POS.gnome.y);

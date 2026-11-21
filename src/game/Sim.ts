@@ -5,7 +5,6 @@
 import {
   CharId,
   ITEM_POS,
-  LEVELS,
   NpcKind,
   PLAYER_MAX_HP,
   PLAYER_START,
@@ -14,6 +13,8 @@ import {
   WORLD_W,
   AnimName,
 } from './constants';
+import { mulberry32, randomSeed, Rng } from './rng';
+import { PROLOG, Role } from './data/areas';
 import {
   ActKind,
   GameEvent,
@@ -29,7 +30,6 @@ import {
 } from './types';
 
 type NpcState = 'idle' | 'walk' | 'hurt' | 'chase' | 'windup' | 'strike' | 'recover' | 'ko' | 'flee';
-type Role = 'walker' | 'guard' | 'police';
 
 interface Npc {
   id: number;
@@ -69,9 +69,6 @@ interface PlayerSim {
   inCar: boolean;
   invuln: number;
 }
-
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const randi = (a: number, b: number) => Math.floor(rand(a, b + 1));
 
 const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
   pickpocket: 1.3,
@@ -117,8 +114,10 @@ export class Sim {
   private events: GameEvent[] = [];
   private policeCooldown = 0;
   private hintCd: Record<CharId, number> = { pole: 0, romanian: 0 };
+  readonly rng: Rng;
 
-  constructor(present: Record<CharId, boolean>, readonly solo: boolean) {
+  constructor(present: Record<CharId, boolean>, readonly solo: boolean, opts: { seed?: number } = {}) {
+    this.rng = mulberry32(opts.seed ?? randomSeed());
     const mk = (id: CharId): PlayerSim => ({
       id,
       present: present[id],
@@ -136,6 +135,13 @@ export class Sim {
     this.spawnLevelNpcs();
   }
 
+  private rand(a: number, b: number) {
+    return a + this.rng() * (b - a);
+  }
+  private randi(a: number, b: number) {
+    return Math.floor(this.rand(a, b + 1));
+  }
+
   // -------------------------------------------------------------------------
   private addNpc(kind: NpcKind, role: Role, x: number, y: number, minX: number, maxX: number, face: 1 | -1 = -1) {
     const hp = BASE_HP[kind];
@@ -150,8 +156,8 @@ export class Sim {
       hp,
       maxHp: hp,
       state: role === 'guard' ? 'idle' : 'walk',
-      t: rand(1, 4),
-      turnT: rand(2, 5),
+      t: this.rand(1, 4),
+      turnT: this.rand(2, 5),
       warn: false,
       rage: false,
       robbed: false,
@@ -169,27 +175,7 @@ export class Sim {
   }
 
   private spawnLevelNpcs() {
-    const [l1, l2, l3] = LEVELS;
-    // Poziom 1 — przedmieście
-    this.addNpc('gartner', 'guard', 2440, 172, 2420, 2460, 1);
-    this.addNpc('herr', 'walker', 2700, 196, l1.x0 + 40, l1.x1 - 60);
-    this.addNpc('frau', 'walker', 2250, 214, l1.x0 + 40, l1.x1 - 60, 1);
-    this.addNpc('jogger', 'walker', 2600, 244, l1.x0 + 20, l1.x1 - 40);
-    this.addNpc('opa', 'walker', 2080, 182, l1.x0 + 20, l1.x0 + 500, 1);
-    // Poziom 2 — ulica handlowa
-    this.addNpc('herr', 'guard', 1478, 176, 1460, 1500, 1);
-    this.addNpc('opa', 'walker', 1300, 190, l2.x0 + 30, l2.x1 - 30);
-    this.addNpc('frau', 'walker', 1750, 218, l2.x0 + 30, l2.x1 - 30, 1);
-    this.addNpc('jogger', 'walker', 1100, 250, l2.x0 + 10, l2.x1 - 10);
-    this.addNpc('herr', 'walker', 1860, 200, l2.x0 + 30, l2.x1 - 30);
-    this.addNpc('frau', 'walker', 1200, 230, l2.x0 + 30, l2.x1 - 30, 1);
-    // Poziom 3 — willowe osiedle
-    this.addNpc('boss', 'guard', 372, 196, 350, 400, -1);
-    this.addNpc('opa', 'walker', 700, 186, l3.x0 + 30, l3.x1 - 30);
-    this.addNpc('frau', 'walker', 160, 210, l3.x0 + 30, l3.x1 - 30, 1);
-    this.addNpc('jogger', 'walker', 820, 252, l3.x0 + 10, l3.x1 - 10);
-    this.addNpc('herr', 'walker', 520, 178, l3.x0 + 30, l3.x1 - 30);
-    this.addNpc('polizei', 'walker', 620, 226, l3.x0 + 300, l3.x1 - 30);
+    for (const sp of PROLOG.spawns) this.addNpc(sp.kind, sp.role, sp.x, sp.y, sp.minX, sp.maxX, sp.face ?? -1);
   }
 
   // -------------------------------------------------------------------------
@@ -324,7 +310,7 @@ export class Sim {
         if (this.sees(w, x, y, 130)) {
           this.alarm += 5;
           w.alertT = 1.2;
-          if (w.role === 'guard' || w.kind === 'polizei' || Math.random() < 0.3) this.enrage(w, p);
+          if (w.role === 'guard' || w.kind === 'polizei' || this.rng() < 0.3) this.enrage(w, p);
         }
       }
     }
@@ -422,9 +408,9 @@ export class Sim {
         this.hint(p.id, 'h.lookout');
         return;
       }
-      if (Math.random() < dt * 6) this.sfx('pick');
+      if (this.rng() < dt * 6) this.sfx('pick');
     }
-    if (kind === 'lockpick' && Math.random() < dt * 6) this.sfx('pick');
+    if (kind === 'lockpick' && this.rng() < dt * 6) this.sfx('pick');
 
     p.prog += dt / ACT_TIME[kind];
     if (p.prog < 1) return;
@@ -458,7 +444,7 @@ export class Sim {
       case 'pickpocket': {
         if (!n) return;
         n.robbed = true;
-        const amount = randi(20, 80);
+        const amount = this.randi(20, 80);
         this.money += amount;
         this.steals++;
         this.sfx('steal');
@@ -470,7 +456,7 @@ export class Sim {
       case 'loot': {
         if (!n) return;
         n.looted = true;
-        const amount = n.kind === 'polizei' ? randi(60, 120) : randi(10, 50);
+        const amount = n.kind === 'polizei' ? this.randi(60, 120) : this.randi(10, 50);
         this.money += amount;
         this.sfx('coin');
         this.txt(`+${amount}€`, n.x, n.y - 30, '#ffe040');
@@ -571,7 +557,7 @@ export class Sim {
         n.x += dir * 55 * dt;
         if (n.t <= 0) {
           n.state = 'walk';
-          n.t = rand(2, 4);
+          n.t = this.rand(2, 4);
         }
         return;
       }
@@ -632,7 +618,7 @@ export class Sim {
         n.warn = n.turnT < 0.75;
         if (n.turnT <= 0) {
           n.face = (-n.face) as 1 | -1;
-          n.turnT = n.role === 'guard' ? rand(1.8, 4.2) : rand(2.6, 5.5);
+          n.turnT = n.role === 'guard' ? this.rand(1.8, 4.2) : this.rand(2.6, 5.5);
           n.warn = false;
         }
         n.t -= dt;
@@ -642,18 +628,18 @@ export class Sim {
         }
         if (n.t <= 0) {
           n.state = n.state === 'walk' ? 'idle' : 'walk';
-          n.t = n.state === 'walk' ? rand(2, 5) : rand(1.5, 3.5);
+          n.t = n.state === 'walk' ? this.rand(2, 5) : this.rand(1.5, 3.5);
         }
         if (n.state === 'walk') {
           n.x += n.face * spd * dt;
           if (n.x < n.minX) {
             n.x = n.minX;
             n.face = 1;
-            n.turnT = rand(2.6, 5.5);
+            n.turnT = this.rand(2.6, 5.5);
           } else if (n.x > n.maxX) {
             n.x = n.maxX;
             n.face = -1;
-            n.turnT = rand(2.6, 5.5);
+            n.turnT = this.rand(2.6, 5.5);
           }
         }
         return;
@@ -714,7 +700,7 @@ export class Sim {
         const cx = alive.length ? alive.reduce((s, p) => s + p.in.x, 0) / alive.length : 1500;
         for (const side of [-1, 1]) {
           const x = Math.max(10, Math.min(WORLD_W - 10, cx + side * 250));
-          const cop = this.addNpc('polizei', 'police', x, rand(WALK_TOP + 10, WALK_BOTTOM - 10), 0, WORLD_W, (-side) as 1 | -1);
+          const cop = this.addNpc('polizei', 'police', x, this.rand(WALK_TOP + 10, WALK_BOTTOM - 10), 0, WORLD_W, (-side) as 1 | -1);
           this.enrage(cop);
         }
         this.sfx('siren');

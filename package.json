@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
     "start": "node build/server/server.js",
     "assets": "python3 tools/gen_sprites.py && python3 tools/gen_sounds.py",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "repository": {
@@ -26,10 +27,11 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
+    "phaser": "^4.2.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "phaser": "^4.2.1"
+    "vitest": "^5.1.1"
   },
   "private": true,
   "type": "module"

@@ -6,6 +6,7 @@ Wynik trafia do public/assets/.
 import math
 import os
 import random
+import zlib
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -940,7 +941,7 @@ def gen_far():
         ("far3", (0x2A1E50, 0x8A4A88), 0x302848, True),
     ]
     for name, (top, bot), sil, night in cfg:
-        rng = random.Random(hash(name) & 0xFFFF)
+        rng = random.Random(zlib.crc32(name.encode()) & 0xFFFF)
         img = Image.new("RGBA", (W, BH), (0, 0, 0, 255))
         d = ImageDraw.Draw(img)
         t, b = rgb(top), rgb(bot)
