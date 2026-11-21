@@ -3,10 +3,13 @@ import { t } from '../i18n';
 import {
   AnimName,
   CharId,
+  GRAVITY,
+  HOLD_MULT,
+  JUMP_V,
+  RUN_MULT,
   ITEM_POS,
   LEVELS,
   LEVEL_W,
-  PLAYER_SPEED,
   PLAYER_START,
   VIEW_H,
   VIEW_W,
@@ -18,7 +21,9 @@ import {
 } from '../game/constants';
 import { Sim } from '../game/Sim';
 import { PROLOG } from '../game/data/areas';
+import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
 import {
+  AtkKind,
   GameEvent,
   GameStartData,
   NF_ALERT,
@@ -52,6 +57,7 @@ class CharView {
   ty = 0;
   x = 0;
   y = 0;
+  z = 0;
   seen = true;
 
   constructor(
@@ -85,16 +91,17 @@ class CharView {
       .setDepth(9002);
   }
 
-  place(face: number, down: boolean) {
+  place(face: number, down: boolean, z = 0) {
     const x = Math.round(this.x);
     const y = Math.round(this.y);
-    this.sprite.setPosition(x, y).setFlipX(face < 0).setDepth(y + (down ? -20 : 0));
-    this.shadow.setPosition(x, y);
-    this.icon.setPosition(x + 2, y - 44);
-    this.stars.setPosition(x, y - 14);
-    this.anger.setPosition(x + 6 * face, y - 36);
-    this.steam.setPosition(x - 8 * face, y - 38);
-    this.label?.setPosition(x, y - 48);
+    const sy = y - Math.round(z);
+    this.sprite.setPosition(x, sy).setFlipX(face < 0).setDepth(y + (down && z <= 0 ? -20 : 0) + (z > 0 ? 0.5 : 0));
+    this.shadow.setPosition(x, y).setScale(z > 0 ? Math.max(0.5, 1 - z / 80) : 1);
+    this.icon.setPosition(x + 2, sy - 44);
+    this.stars.setPosition(x, sy - 14);
+    this.anger.setPosition(x + 6 * face, sy - 36);
+    this.steam.setPosition(x - 8 * face, sy - 38);
+    this.label?.setPosition(x, sy - 48);
   }
 
   setVisible(v: boolean) {
@@ -130,6 +137,14 @@ export class GameScene extends Phaser.Scene {
   private hurtT = 0;
   private knock = 0;
   private stepT = 0;
+  private z = 0;
+  private vz = 0;
+  private kdT = 0;
+  private ak: AtkKind = 'n';
+  private running = false;
+  private lastTapDir = 0;
+  private lastTapT = 0;
+  private fullStickT = 0;
 
   private views: Record<CharId, CharView> = {} as never;
   private npcViews = new Map<number, CharView>();
@@ -161,7 +176,10 @@ export class GameScene extends Phaser.Scene {
     this.sim = null;
     this.ended = false;
     this.atkSeq = 0;
-    this.atkT = this.hurtT = this.knock = 0;
+    this.atkT = this.hurtT = this.knock = this.kdT = 0;
+    this.z = this.vz = 0;
+    this.running = false;
+    this.ak = 'n';
     this.remoteInput = null;
     this.pendingEv = [];
     this.offs = [];
@@ -169,7 +187,7 @@ export class GameScene extends Phaser.Scene {
     this.stage = 0;
     this.levelSeen = -1;
     this.startTime = this.time.now;
-    controls.touchAtk = controls.touchAct = false;
+    controls.touchAtk = controls.touchAct = controls.touchJump = false;
     controls.touchX = controls.touchY = 0;
 
     const solo = data.mode === 'solo';
@@ -208,7 +226,7 @@ export class GameScene extends Phaser.Scene {
 
     // klawiatura
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,E,SPACE,Z,X,ESC') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,J,K,L,E,SPACE,Z,X,C,SHIFT,ESC') as Record<string, Phaser.Input.Keyboard.Key>;
     kb.addCapture('SPACE,UP,DOWN,LEFT,RIGHT');
 
     // sieć
@@ -256,48 +274,103 @@ export class GameScene extends Phaser.Scene {
     if (k.D.isDown || k.RIGHT.isDown) mx += 1;
     if (k.W.isDown || k.UP.isDown) my -= 1;
     if (k.S.isDown || k.DOWN.isDown) my += 1;
-    if (controls.touchX || controls.touchY) {
+    const touchMove = !!(controls.touchX || controls.touchY);
+    if (touchMove) {
       mx = controls.touchX;
       my = controls.touchY;
     }
     const atkPressed =
       Phaser.Input.Keyboard.JustDown(k.J) || Phaser.Input.Keyboard.JustDown(k.SPACE) || Phaser.Input.Keyboard.JustDown(k.Z) || controls.touchAtk;
     controls.touchAtk = false;
+    const jumpPressed =
+      Phaser.Input.Keyboard.JustDown(k.L) || Phaser.Input.Keyboard.JustDown(k.C) || Phaser.Input.Keyboard.JustDown(k.SHIFT) || controls.touchJump;
+    controls.touchJump = false;
     const actHeld = k.K.isDown || k.E.isDown || k.X.isDown || controls.touchAct;
+
+    // bieg: podwójne stuknięcie w bok (klawiatura) albo joystick wychylony do końca
+    const tapL = Phaser.Input.Keyboard.JustDown(k.A) || Phaser.Input.Keyboard.JustDown(k.LEFT);
+    const tapR = Phaser.Input.Keyboard.JustDown(k.D) || Phaser.Input.Keyboard.JustDown(k.RIGHT);
+    const now = this.time.now;
+    for (const [tap, dir] of [
+      [tapL, -1],
+      [tapR, 1],
+    ] as const) {
+      if (!tap) continue;
+      if (this.lastTapDir === dir && now - this.lastTapT < 280) this.running = true;
+      this.lastTapDir = dir;
+      this.lastTapT = now;
+    }
+    if (touchMove) {
+      this.fullStickT = Math.abs(controls.touchX) > 0.9 ? this.fullStickT + dt : 0;
+      if (this.fullStickT > 0.3) this.running = true;
+    }
+    if (!mx || (this.running && Math.sign(mx) !== this.face)) this.running = false;
 
     const ps = this.snap?.p[this.me];
     const down = !!ps?.down;
     const inCar = !!ps?.inCar;
+    const holding = !!ps?.hold;
+    const st = ps ? statsFromArray(ps.st) : baseStats(this.me);
 
     this.atkT = Math.max(0, this.atkT - dt);
     this.hurtT = Math.max(0, this.hurtT - dt);
+    this.kdT = Math.max(0, this.kdT - dt);
     let anim: AnimName = 'idle';
+    const moving = !!(mx || my);
 
     if (down || inCar) {
       anim = 'down';
+      this.z = this.vz = 0;
+      this.running = false;
+    } else if (this.kdT > 0) {
+      anim = 'down';
+      this.running = false;
     } else if (this.hurtT > 0) {
       anim = 'hurt';
     } else {
+      if (jumpPressed && this.z === 0 && !holding) {
+        this.vz = JUMP_V;
+        this.z = 0.01;
+        this.sound.play('swing', { volume: 0.15, rate: 1.6 });
+      }
       if (atkPressed && this.atkT <= 0) {
         this.atkSeq++;
-        this.atkT = this.me === 'pole' ? 0.34 : 0.26;
+        this.ak = holding ? 'n' : this.z > 0 ? 'j' : this.running ? 'r' : 'n';
+        this.atkT = attackCooldown(this.me, st);
+        if (this.ak === 'r') this.running = false;
       }
-      if (this.atkT > 0) {
-        anim = 'atk';
-      } else if (actHeld && !(mx || my)) {
-        anim = 'act';
-      } else if (mx || my) {
+      const air = this.z > 0;
+      if (air) anim = this.atkT > 0 ? 'jatk' : 'jump';
+      else if (this.atkT > 0) anim = 'atk';
+      else if (holding) anim = 'hold';
+      else if (actHeld && !moving) anim = this.hasAction() ? 'act' : 'block';
+      else if (moving) anim = this.running ? 'run' : 'walk';
+      // na ziemi cios zatrzymuje w miejscu; w powietrzu można sterować
+      if (moving && (air || this.atkT <= 0) && anim !== 'act' && anim !== 'block') {
         const len = Math.hypot(mx, my) || 1;
-        const sp = PLAYER_SPEED * dt;
-        this.px += (mx / len) * sp * Math.min(1, Math.hypot(mx, my));
-        this.py += (my / len) * sp * 0.72 * Math.min(1, Math.hypot(mx, my));
+        const mag = Math.min(1, Math.hypot(mx, my));
+        const sp = moveSpeed(st) * (this.running ? RUN_MULT : 1) * (holding ? HOLD_MULT : 1) * dt;
+        this.px += (mx / len) * sp * mag;
+        this.py += (my / len) * sp * 0.72 * mag;
         if (Math.abs(mx) > 0.2) this.face = mx > 0 ? 1 : -1;
-        anim = 'walk';
-        this.stepT += dt;
-        if (this.stepT > 0.18) {
-          this.stepT = 0;
-          if (Math.random() < 0.35) this.spawnDust(this.px - this.face * 6, this.py);
+        if (!air) {
+          this.stepT += dt;
+          if (this.stepT > (this.running ? 0.1 : 0.18)) {
+            this.stepT = 0;
+            if (Math.random() < (this.running ? 0.8 : 0.35)) this.spawnDust(this.px - this.face * 6, this.py);
+          }
         }
+      }
+    }
+    // fizyka skoku
+    if (this.z > 0 || this.vz > 0) {
+      this.vz -= GRAVITY * dt;
+      this.z += this.vz * dt;
+      if (this.z <= 0) {
+        this.z = 0;
+        this.vz = 0;
+        this.spawnDust(this.px - 5, this.py);
+        this.spawnDust(this.px + 5, this.py);
       }
     }
     if (this.knock) {
@@ -312,10 +385,12 @@ export class GameScene extends Phaser.Scene {
     return {
       x: Math.round(this.px * 10) / 10,
       y: Math.round(this.py * 10) / 10,
+      z: Math.round(this.z),
       face: this.face,
       anim,
       atk: this.atkSeq,
-      act: actHeld && anim === 'act',
+      ak: this.ak,
+      act: actHeld && (anim === 'act' || anim === 'block' || anim === 'hold'),
     };
   }
 
@@ -392,6 +467,11 @@ export class GameScene extends Phaser.Scene {
         if (e.who === this.me) {
           this.knock = e.dx;
           this.hurtT = 0.3;
+          this.running = false;
+          if (e.kd) {
+            this.kdT = e.kd;
+            this.hurtT = 0;
+          }
           this.cameras.main.shake(150, 0.008);
           this.cameras.main.flash(80, 255, 60, 60);
         }
@@ -469,7 +549,7 @@ export class GameScene extends Phaser.Scene {
         v.x = this.px;
         v.y = this.py;
         v.setAnim(ps?.down ? 'down' : input.anim);
-        v.place(this.face, !!ps?.down);
+        v.place(this.face, !!ps?.down || this.kdT > 0, this.z);
         // mruganie przy nietykalności
         v.sprite.setAlpha(this.hurtT > 0 ? 0.6 : 1);
       } else if (ps) {
@@ -477,15 +557,16 @@ export class GameScene extends Phaser.Scene {
         v.x += (ps.x - v.x) * lerp;
         v.y += (ps.y - v.y) * lerp;
         v.setAnim(ps.anim);
-        v.place(ps.face, ps.down);
+        v.z += (ps.z - v.z) * Math.min(1, lerp * 1.5);
+        v.place(ps.face, ps.down || ps.kd > 0, v.z);
       }
-      v.stars.setVisible(!!ps?.down);
+      v.stars.setVisible(!!ps?.down || (c === this.me ? this.kdT > 0 : (ps?.kd ?? 0) > 0));
     }
 
     // NPC
     if (s) {
       const alive = new Set<number>();
-      for (const [id, kind, x, y, face, anim, f] of s.n) {
+      for (const [id, kind, x, y, face, anim, f, , z] of s.n) {
         alive.add(id);
         let v = this.npcViews.get(id);
         if (!v) {
@@ -496,7 +577,7 @@ export class GameScene extends Phaser.Scene {
         v.x += (x - v.x) * lerp;
         v.y += (y - v.y) * lerp;
         v.setAnim(anim);
-        v.place(face, !!(f & NF_KO));
+        v.place(face, anim === 'down', z);
         const rage = !!(f & NF_RAGE);
         if (rage) v.sprite.setTint(0xff7070);
         else if ((f & NF_ROBBED) && !(f & NF_KO)) v.sprite.setTint(0xd8d8ff);
@@ -572,31 +653,50 @@ export class GameScene extends Phaser.Scene {
 
   /** Podpowiedź dla lokalnego gracza — co zrobi AKCJA w tym miejscu. */
   actionHint(): string {
+    return this.actionInfo().text;
+  }
+
+  /** Czy AKCJA zrobi coś w tym miejscu (inaczej przytrzymanie AKCJI to blok). */
+  hasAction(): boolean {
+    return this.actionInfo().act;
+  }
+
+  private actionInfo(): { text: string; act: boolean } {
     const s = this.snap;
-    if (!s) return '';
+    const none = { text: '', act: false };
+    if (!s) return none;
+    const yes = (k: string) => ({ text: t(k), act: true });
+    const info = (k: string) => ({ text: t(k), act: false });
     const me = s.p[this.me];
-    if (me.down) return t('hint.down');
-    if (me.inCar) return t('hint.in_car');
+    if (me.down) return info('hint.down');
+    if (me.inCar) return info('hint.in_car');
+    if (me.hold) return yes('hint.holding');
     const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
     const o = s.p[this.other];
-    if (o.present && o.down && near(o.x, o.y, 28, 16)) return t('hint.revive');
-    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return t('hint.gnome');
+    if (o.present && o.down && near(o.x, o.y, 28, 16)) return yes('hint.revive');
+    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return yes('hint.gnome');
     if (s.stage === 1 && !s.o.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
-      if (s.o.lockHp > 0) return this.me === 'romanian' ? t('hint.lockpick') : t('hint.smash');
-      return t('hint.bike');
+      if (s.o.lockHp > 0) return this.me === 'romanian' ? yes('hint.lockpick') : info('hint.smash');
+      return yes('hint.bike');
     }
     if (s.stage === 2 && !s.o.carGone && near(s.o.carX, ITEM_POS.car.y, 56, 22)) {
-      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? t('hint.carlock') : t('hint.lookout');
-      return t('hint.enter');
+      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? yes('hint.carlock') : info('hint.lookout');
+      return yes('hint.enter');
+    }
+    for (const [, , x, y, , anim, f, , z] of s.n) {
+      if (anim === 'down' && !(f & NF_KO) && z === 0 && near(x, y, 30, 14)) return yes('hint.lift');
     }
     for (const [, , x, y, face, , f] of s.n) {
       if (!near(x, y, 36, 14)) continue;
-      if (f & NF_KO) return f & NF_LOOTED ? '' : t('hint.loot');
+      if (f & NF_KO) {
+        if (f & NF_LOOTED) continue;
+        return yes('hint.loot');
+      }
       if (this.me === 'romanian' && !(f & (NF_ROBBED | NF_RAGE))) {
-        return face * (this.px - x) < 0 ? t('hint.pick') : t('hint.facing');
+        return face * (this.px - x) < 0 ? yes('hint.pick') : info('hint.facing');
       }
     }
-    return '';
+    return none;
   }
 
   /** Indeks poziomu, na którym stoi lokalny gracz. */

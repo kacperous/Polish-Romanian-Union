@@ -55,7 +55,11 @@ FW, FH = 40, 40  # rozmiar klatki
 CX = 20
 GROUND = 38
 
-FRAMES = ["idle0", "idle1", "walk0", "walk1", "walk2", "walk3", "atk0", "atk1", "atk2", "hurt", "down", "act0", "act1"]
+FRAMES = [
+    "idle0", "idle1", "walk0", "walk1", "walk2", "walk3", "atk0", "atk1", "atk2", "hurt", "down", "act0", "act1",
+    # Rozdzial II: skok, cios w skoku, blok, trzymanie nad glowa (2 klatki)
+    "jump", "jatk", "block", "hold0", "hold1",
+]
 
 SKIN_L = rgb(0xF2C39B)
 SKIN_T = rgb(0xD9A066)
@@ -131,6 +135,16 @@ POSES = {
     "hurt": dict(bob=0, feet=((-4, 0), (1, 0)), hands=((-9, 18), (4, 17)), club=-150, lean=-2),
     "act0": dict(bob=2, feet=((-4, 0), (4, 0)), hands=((5, 26), (10, 27)), club=60, lean=1),
     "act1": dict(bob=2, feet=((-4, 0), (4, 0)), hands=((6, 25), (11, 25)), club=60, lean=1),
+    "jump": dict(bob=-1, feet=((-4, -5), (4, -7)), hands=((-8, 19), (7, 19)), club=-60),
+    "jatk": dict(bob=-1, feet=((-5, -4), (3, -6)), hands=((-2, 25), (11, 21)), club=10, lean=1),
+    "block": dict(bob=1, feet=((-4, 0), (3, 0)), hands=((5, 16), (8, 18)), club=-95, lean=-1),
+    "hold0": dict(bob=0, feet=((-3, 0), (3, 0)), hands=((-8, 8), (8, 8)), club=-60),
+    "hold1": dict(bob=1, feet=((-1, -2), (2, 0)), hands=((-8, 9), (8, 9)), club=-60),
+}
+# cios w skoku dla kopiacych (latajacy kopniak) i bijacych piescia
+JATK = {
+    "kick": dict(bob=-1, feet=((-5, -5), (14, -7)), hands=((-8, 18), (-3, 20)), lean=-2),
+    "punch": dict(bob=-1, feet=((-4, -5), (4, -7)), hands=((-3, 24), (12, 19)), lean=1),
 }
 KICK = {
     "atk0": dict(bob=1, feet=((-3, 0), (0, -3)), hands=((-6, 24), (2, 22)), lean=-1),
@@ -334,6 +348,8 @@ def draw_character(spec, frame):
             pose = dict(KICK[frame])
         elif spec["attack"] == "punch":
             pose = dict(PUNCH[frame])
+    if frame == "jatk" and spec["attack"] in JATK:
+        pose = dict(JATK[spec["attack"]])
     bob = pose.get("bob", 0)
     lean = pose.get("lean", 0)
     hip_y = 29 + bob

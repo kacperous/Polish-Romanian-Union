@@ -88,17 +88,18 @@ Odzyskane auto + krasnal na desce rozdzielczej, ucieczka autostradą na wschód 
 ### 3.2 Statystyki postaci (RPG-lite)
 Osobne dla Polaka i Rumuna, startowe wartości oddają role:
 
-| Stat | Wpływ w `Sim` | Polak start | Rumun start |
+| Stat (`stats.ts`) | Wpływ | Polak start | Rumun start |
 |---|---|---|---|
-| **Siła** (cios/pałka) | obrażenia ciosu i broni | 12 | 6 |
-| **Kopnięcie** | obrażenia kopnięć / ataków w biegu | 6 | 10 |
-| **Rzut** | obrażenia rzuconych przedmiotów i ludzi | 8 | 8 |
-| **Zwinność** | szybkość ruchu, czas `atkT` | 6 | 12 |
-| **Obrona** | redukcja obrażeń w `npcStrike` | 10 | 6 |
-| **Lekka ręka** | czas `ACT_TIME.pickpocket/lockpick`, łup | 2 | 12 |
-| **Wytrzymałość** | max HP (`PLAYER_MAX_HP` → per postać) | 14 | 10 |
-| **Twardy łeb** (odp. *will power*) | szansa, że nie padnie od ciosu przy 1 HP; czas „ogłuszenia” | 8 | 6 |
+| **Siła** `sila` | obrażenia pałki / broni | 12 | 6 |
+| **Kopnięcie** `kop` | obrażenia kopniaków Rumuna | 6 | 6 |
+| **Rzut** `rzut` | obrażenia rzuconych przedmiotów i ludzi | 8 | 8 |
+| **Zwinność** `zw` | szybkość ruchu, czas między ciosami | 6 | 12 |
+| **Obrona** `obr` | redukcja przyjmowanych obrażeń | 10 | 8 |
+| **Lekka ręka** `reka` | czas kradzieży / wytrycha / przeszukania | 2 | 12 |
+| **Wytrzymałość** `wytrz` | max HP (×10) | 12 | 12 |
+| **Twardy łeb** `leb` | ile ciosów z rzędu do przewrócenia, czas leżenia | 8 | 6 |
 
+Startowe wartości odtwarzają dokładnie balans prologu (Polak 20 obrażeń na cios, Rumun 11, obaj 120 HP).
 Statystyki rosną **tylko** przez jedzenie, książki i nagrody z zadań (jak w RCR — żadnego XP),
 z limitem 63 na stat (pasuje do kodowania hasła, patrz 3.8).
 

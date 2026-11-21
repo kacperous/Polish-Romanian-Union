@@ -4,7 +4,7 @@ import type { PlayerInput } from './types';
 import { Sim } from './Sim';
 
 export function input(x: number, y: number, extra: Partial<PlayerInput> = {}): PlayerInput {
-  return { x, y, face: -1, anim: 'idle', atk: 0, act: false, ...extra };
+  return { x, y, z: 0, face: -1, anim: 'idle', atk: 0, ak: 'n', act: false, ...extra };
 }
 
 /** Sim bez NPC — do testów konkretnych mechanik. */

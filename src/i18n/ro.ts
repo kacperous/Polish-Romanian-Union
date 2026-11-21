@@ -5,8 +5,8 @@ export const ro: Dict = {
   'menu.create': 'CREEAZĂ JOC ONLINE',
   'menu.join': 'INTRĂ (COD)',
   'menu.solo': 'JOACĂ SOLO',
-  'menu.help.touch': 'Joystick: mers   •   LOVEȘTE: atac   •   ACȚIUNE (ține apăsat): fură / deschide / ridică',
-  'menu.help.keys': 'WASD/săgeți: mers   •   J / Spațiu: LOVEȘTE   •   K / E (ține apăsat): ACȚIUNE',
+  'menu.help.touch': 'Joystick: mers (la maxim = fugă) • LOVEȘTE • SARI • ACȚIUNE (ține): fură / ridică / blochează',
+  'menu.help.keys': 'WASD: mers (2× = fugă) • J: LOVEȘTE • L: SARI • K (ține): ACȚIUNE / blocare',
   'menu.connecting': 'Conectare la server...',
   'menu.try_solo': ' — încearcă JOACĂ SOLO',
 
@@ -60,7 +60,7 @@ export const ro: Dict = {
   'hud.goal': 'Țintă: {g}',
   'hud.next': 'ÎNAINTE!',
   'hud.alarm': 'ATENȚIE!',
-  'hud.keys': 'WASD/săgeți: mers • J/Spațiu: LOVEȘTE • K/E (ține apăsat): ACȚIUNE • ESC: meniu',
+  'hud.keys': 'WASD: mers (2× = fugă) • J: LOVEȘTE • L: SARI • K: ACȚIUNE / blocare • ESC: meniu',
   'btn.atk': 'LOVEȘTE',
   'btn.act': 'ACȚIUNE',
   'rotate': 'Întoarce telefonul pe orizontală<br />ca să joci!',
@@ -115,4 +115,7 @@ export const ro: Dict = {
   'end.wait': 'Așteaptă — gazda poate începe din nou',
   'end.again': 'ÎNCĂ O DATĂ',
   'end.menu': 'MENIU',
+  'btn.jump': 'SARI',
+  'hint.holding': 'LOVEȘTE: aruncă-l!  •  ACȚIUNE: lasă-l jos',
+  'hint.lift': 'ACȚIUNE: ridică-l pe cel căzut (apoi LOVEȘTE = aruncare)',
 };

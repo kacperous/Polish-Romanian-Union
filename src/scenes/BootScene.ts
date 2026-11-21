@@ -4,7 +4,7 @@ import { ANIM_FRAMES } from '../game/constants';
 import { txt } from '../ui';
 
 export const CHAR_KEYS = ['pole', 'romanian', 'herr', 'frau', 'jogger', 'opa', 'gartner', 'boss', 'polizei'];
-const SFX = ['hit', 'swing', 'kick', 'coin', 'steal', 'rage', 'alert', 'siren', 'hurt', 'pickup', 'click', 'engine', 'pick', 'ko', 'win', 'lose', 'music_game', 'music_menu'];
+const SFX = ['block', 'hit', 'swing', 'kick', 'coin', 'steal', 'rage', 'alert', 'siren', 'hurt', 'pickup', 'click', 'engine', 'pick', 'ko', 'win', 'lose', 'music_game', 'music_menu'];
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -38,12 +38,12 @@ export class BootScene extends Phaser.Scene {
     for (const k of CHAR_KEYS) {
       const tex = `char_${k}`;
       for (const [name, frames] of Object.entries(ANIM_FRAMES)) {
-        const rate = name === 'walk' ? (k === 'jogger' ? 12 : 9) : name === 'atk' ? 14 : name === 'idle' ? 2 : 6;
+        const rate = name === 'walk' ? (k === 'jogger' ? 12 : 9) : name === 'run' ? 15 : name === 'atk' ? 14 : name === 'idle' ? 2 : 6;
         this.anims.create({
           key: `${tex}-${name}`,
           frames: this.anims.generateFrameNumbers(tex, { frames: [...frames] }),
           frameRate: rate,
-          repeat: name === 'atk' || name === 'hurt' || name === 'down' ? 0 : -1,
+          repeat: ['atk', 'hurt', 'down', 'jump', 'jatk', 'block'].includes(name) ? 0 : -1,
         });
       }
     }

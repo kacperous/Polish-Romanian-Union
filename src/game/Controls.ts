@@ -5,6 +5,7 @@ export const controls = {
   touchY: 0,
   touchAtk: false,
   touchAct: false,
+  touchJump: false,
   touchActive: false,
 };
 

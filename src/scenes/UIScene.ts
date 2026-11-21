@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { t } from '../i18n';
 import type { GameScene } from './GameScene';
-import { CharId, PLAYER_MAX_HP } from '../game/constants';
+import { CharId } from '../game/constants';
 import { controls, isTouchDevice } from '../game/Controls';
 import { FONT, txt } from '../ui';
 
@@ -93,7 +93,7 @@ export class UIScene extends Phaser.Scene {
       this.game_.events.off('level', this.levelBanner, this);
       this.game_.events.off('stage');
       controls.touchX = controls.touchY = 0;
-      controls.touchAct = controls.touchAtk = false;
+      controls.touchAct = controls.touchAtk = controls.touchJump = false;
     });
 
     if (isTouchDevice()) this.createTouch();
@@ -146,6 +146,13 @@ export class UIScene extends Phaser.Scene {
     };
     const atk = mkBtn(866, 430, 62, t('btn.atk'), 0xd8263a);
     const act = mkBtn(742, 482, 50, t('btn.act'), 0x1f3f98);
+    const jump = mkBtn(876, 300, 44, t('btn.jump'), 0x3e8e48);
+    jump.on('pointerdown', () => {
+      controls.touchJump = true;
+      jump.setScale(0.9);
+    });
+    jump.on('pointerup', () => jump.setScale(1));
+    jump.on('pointerout', () => jump.setScale(1));
     atk.on('pointerdown', () => {
       controls.touchAtk = true;
       atk.setScale(0.9);
@@ -210,10 +217,15 @@ export class UIScene extends Phaser.Scene {
       const g = this.hp[c];
       const p = s.p[c];
       g.clear();
-      for (let i = 0; i < PLAYER_MAX_HP; i++) {
-        const full = i < p.hp;
-        g.fillStyle(0x181020, 1).fillRect(i * 11, 0, 10, 14);
-        g.fillStyle(full ? (p.hp <= 3 ? 0xff4040 : 0x7dff7d) : 0x404050, 1).fillRect(i * 11 + 1, 1, 8, 12);
+      // 1 kratka = 10 pkt życia; przy dużej Wytrzymałości kratki się zwężają
+      const cells = Math.max(1, Math.ceil(p.mhp / 10));
+      const cw = Math.min(11, Math.floor(144 / cells));
+      const low = p.hp <= p.mhp * 0.25;
+      for (let i = 0; i < cells; i++) {
+        const fill = Phaser.Math.Clamp((p.hp - i * 10) / 10, 0, 1);
+        g.fillStyle(0x181020, 1).fillRect(i * cw, 0, cw - 1, 14);
+        g.fillStyle(0x404050, 1).fillRect(i * cw + 1, 1, Math.max(1, cw - 3), 12);
+        if (fill > 0) g.fillStyle(low ? 0xff4040 : 0x7dff7d, 1).fillRect(i * cw + 1, 1, Math.max(1, Math.round((cw - 3) * fill)), 12);
       }
       this.panels[c].setAlpha(p.down ? 0.55 : 1);
     }

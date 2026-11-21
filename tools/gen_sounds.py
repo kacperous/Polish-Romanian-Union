@@ -221,7 +221,18 @@ def gen_music():
     save("music_menu", s, 0.5)
 
 
+def gen_sfx_ch2():
+    """Dzwieki Rozdzialu II (osobne ziarno, zeby nie zmieniac starych plikow)."""
+    global rng
+    rng = np.random.default_rng(2002)
+    # blok — gluchy stuk
+    t = t_(0.1)
+    s = square(np.linspace(140, 110, len(t)), t, 0.5) * env(len(t)) * 0.7 + noise(len(t)) * env(len(t)) * 0.3
+    save("block", lowpass(s, 0.3), 0.6)
+
+
 if __name__ == "__main__":
     gen_sfx()
     gen_music()
+    gen_sfx_ch2()
     print("OK ->", OUT, sorted(os.listdir(OUT)))

@@ -4,8 +4,8 @@ export const pl = {
   'menu.create': 'STWÓRZ GRĘ ONLINE',
   'menu.join': 'DOŁĄCZ (KOD)',
   'menu.solo': 'GRAJ SOLO',
-  'menu.help.touch': 'Joystick: ruch   •   BIJ: cios   •   AKCJA (przytrzymaj): kradnij / otwieraj / podnoś',
-  'menu.help.keys': 'WASD/strzałki: ruch   •   J / Spacja: BIJ   •   K / E (przytrzymaj): AKCJA',
+  'menu.help.touch': 'Joystick: ruch (do końca = bieg) • BIJ • SKOK • AKCJA (przytrzymaj): kradnij / podnoś / blok',
+  'menu.help.keys': 'WASD: ruch (2× w bok = bieg) • J: BIJ • L: SKOK • K (przytrzymaj): AKCJA / blok',
   'menu.connecting': 'Łączenie z serwerem...',
   'menu.try_solo': ' — spróbuj GRAJ SOLO',
 
@@ -59,7 +59,7 @@ export const pl = {
   'hud.goal': 'Cel: {g}',
   'hud.next': 'DALEJ!',
   'hud.alarm': 'UWAGA!',
-  'hud.keys': 'WASD/strzałki: ruch • J/Spacja: BIJ • K/E (przytrzymaj): AKCJA • ESC: menu',
+  'hud.keys': 'WASD: ruch (2× = bieg) • J: BIJ • L: SKOK • K: AKCJA / blok • ESC: menu',
   'btn.atk': 'BIJ',
   'btn.act': 'AKCJA',
   'rotate': 'Obróć telefon poziomo,<br />żeby grać!',
@@ -115,6 +115,9 @@ export const pl = {
   'end.wait': 'Czekaj — host może zacząć jeszcze raz',
   'end.again': 'JESZCZE RAZ',
   'end.menu': 'MENU',
+  'btn.jump': 'SKOK',
+  'hint.holding': 'BIJ: rzuć nim!  •  AKCJA: puść',
+  'hint.lift': 'AKCJA: podnieś leżącego (potem BIJ = rzut)',
 };
 
 export type Dict = Record<keyof typeof pl, string>;

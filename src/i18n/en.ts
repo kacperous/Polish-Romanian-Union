@@ -5,8 +5,8 @@ export const en: Dict = {
   'menu.create': 'CREATE ONLINE GAME',
   'menu.join': 'JOIN (CODE)',
   'menu.solo': 'PLAY SOLO',
-  'menu.help.touch': 'Joystick: move   •   HIT: attack   •   ACTION (hold): steal / open / revive',
-  'menu.help.keys': 'WASD/arrows: move   •   J / Space: HIT   •   K / E (hold): ACTION',
+  'menu.help.touch': 'Joystick: move (full tilt = run) • HIT • JUMP • ACTION (hold): steal / lift / block',
+  'menu.help.keys': 'WASD: move (double-tap = run) • J: HIT • L: JUMP • K (hold): ACTION / block',
   'menu.connecting': 'Connecting to server...',
   'menu.try_solo': ' — try PLAY SOLO',
 
@@ -60,7 +60,7 @@ export const en: Dict = {
   'hud.goal': 'Goal: {g}',
   'hud.next': 'GO ON!',
   'hud.alarm': 'DANGER!',
-  'hud.keys': 'WASD/arrows: move • J/Space: HIT • K/E (hold): ACTION • ESC: menu',
+  'hud.keys': 'WASD: move (2× = run) • J: HIT • L: JUMP • K: ACTION / block • ESC: menu',
   'btn.atk': 'HIT',
   'btn.act': 'ACTION',
   'rotate': 'Turn your phone sideways<br />to play!',
@@ -115,4 +115,7 @@ export const en: Dict = {
   'end.wait': 'Wait — the host can start again',
   'end.again': 'PLAY AGAIN',
   'end.menu': 'MENU',
+  'btn.jump': 'JUMP',
+  'hint.holding': 'HIT: throw him!  •  ACTION: put down',
+  'hint.lift': 'ACTION: lift the downed guy (then HIT = throw)',
 };
