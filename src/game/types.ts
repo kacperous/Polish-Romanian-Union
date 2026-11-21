@@ -94,6 +94,8 @@ export type GameEvent =
   | { e: 'dialog'; lines: [string, string][] }
   | { e: 'dialog_end' }
   | { e: 'shake' }
+  /** friendly fire: `who` oberwał od `by` */
+  | { e: 'ff'; who: CharId; by: CharId }
   | { e: 'save' }
   | { e: 'eat'; who: CharId; good: string; ups: string[] }
   | { e: 'end'; win: boolean; reason: string };
@@ -108,7 +110,7 @@ export interface CitySnap {
   stamps: number;
   /** znalezione ukryte krasnale (bity) */
   gnomes: number;
-  /** postęp czekania przy wyjściu 0..1 (co-op) */
+  /** 1 — jeden gracz czeka przy wyjściu na drugiego (co-op) */
   wait: number;
   /** [klucz imienia bossa, życie 0..1] w trakcie walki z bossem */
   boss: [string, number] | null;

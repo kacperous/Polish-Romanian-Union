@@ -703,6 +703,13 @@ export class Sim {
       this.sfx(isPole || wdef ? 'hit' : 'kick');
       this.damageNpc(n, dmg, knock, p);
     }
+    // friendly fire: kumpel w zasięgu też obrywa
+    const m = this.mate(p);
+    const mdx = spin ? Math.abs(m.in.x - x) : (m.in.x - x) * face;
+    if (mdx >= -4 && mdx <= range && Math.abs(m.in.y - y) <= 14 && (m.in.z < 12 || ak === 'j')) {
+      const dir = (spin ? Math.sign(m.in.x - x) || face : face) as 1 | -1;
+      if (this.friendlyHit(p, m, dmg, dir)) hitSomething = true;
+    }
     // zużycie broni (np. bagietka łamie się po kilku ciosach)
     if (hitSomething && weapon && wdef && wdef.dur > 0 && --weapon.dur <= 0) {
       this.txt('f.broke', x, y - 44, '#ffb060');
@@ -711,6 +718,20 @@ export class Sim {
     }
     if (this.rules.onAttack(p, x, y, face, range)) hitSomething = true;
     if (hitSomething) this.witnesses(p, x, y);
+  }
+
+  /**
+   * Friendly fire: cios / rzut trafia kumpla (połowa obrażeń, blok działa).
+   * Trafiony się wkurza (animacja po stronie klienta). Zwraca true, jeśli trafił.
+   */
+  friendlyHit(by: PlayerSim, victim: PlayerSim, dmg: number, dir: 1 | -1): boolean {
+    if (this.solo || victim === by || !victim.present || victim.down || victim.inCar || victim.shop) return false;
+    if (victim.invuln > 0 || victim.kd > 0 || this.cutT > 0) return false;
+    const blocking = victim.in.anim === 'block' && victim.in.face === -dir;
+    this.ev({ e: 'fx', k: 'hit', x: victim.in.x, y: victim.in.y - 22 });
+    this.hurtPlayer(victim, Math.max(1, Math.round(dmg * 0.5)), dir, blocking);
+    this.ev({ e: 'ff', who: victim.id, by: by.id });
+    return true;
   }
 
   /** Świadkowie bójki podnoszą alarm i czasem się wkurzają. */
@@ -770,6 +791,14 @@ export class Sim {
       this.ev({ e: 'fx', k: 'hit', x: o.x, y: o.y - 18 });
       this.sfx('hit');
       this.damageNpc(o, dmg, true, thrower);
+    }
+    if (thrower && n.z <= 30) {
+      const m = this.mate(thrower);
+      const key = m.id === 'pole' ? -1 : -2;
+      if (!n.hitIds.includes(key) && Math.abs(m.in.x - n.x) <= 14 && Math.abs(m.in.y - n.y) <= 12 && m.in.z < 12) {
+        n.hitIds.push(key);
+        this.friendlyHit(thrower, m, dmg, (Math.sign(n.vx) || 1) as 1 | -1);
+      }
     }
     if (n.x < 4 || n.x > this.areaW - 4) n.vx = 0;
     if (n.z <= 0) {
@@ -907,6 +936,16 @@ export class Sim {
           return;
         }
         if (!def.rolls) it.vx *= 0.4;
+      }
+      // friendly fire rzutem
+      const m = this.mate(thrower);
+      const key = m.id === 'pole' ? -1 : -2;
+      if (!it.hitIds.includes(key) && Math.abs(m.in.x - it.x) <= 12 && Math.abs(m.in.y - it.y) <= 12 && m.in.z < 12) {
+        it.hitIds.push(key);
+        if (this.friendlyHit(thrower, m, dmg, (Math.sign(it.vx) || 1) as 1 | -1) && def.breaks) {
+          this.removeItem(it);
+          return;
+        }
       }
     } else if (it.byNpc >= 0) {
       for (const p of this.alive()) {

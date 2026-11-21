@@ -25,7 +25,7 @@ import { CITY, CityAreaId, DOOR_Y } from '../game/data/city';
 import { CAR_Y, CityRules } from '../game/chapters/city';
 import { GNOME_SPOTS, NPC_PARAMS } from '../game/data/story';
 import type { DialogScene } from './DialogScene';
-import { saveLocal } from '../game/save';
+import { markPrologDone, saveLocal } from '../game/save';
 import { ITEMS } from '../game/data/items';
 import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
 import { CHARGE_TIME, hasTech } from '../game/data/techniques';
@@ -67,6 +67,8 @@ class CharView {
   y = 0;
   z = 0;
   seen = true;
+  /** wkurzenie po friendly fire (sekundy) */
+  angerT = 0;
 
   constructor(
     private scene: Phaser.Scene,
@@ -605,6 +607,15 @@ export class GameScene extends Phaser.Scene {
       case 'dialog_end':
         this.scene.stop('Dialog');
         break;
+      case 'ff': {
+        // friendly fire: trafiony kumpel się wkurza
+        const v = this.views[e.who];
+        v.angerT = 2.6;
+        this.sound.play('rage', { volume: 0.35, rate: 1.3 });
+        this.floatText(t(`ff.${e.who}.${Math.floor(Math.random() * 3)}`), v.x, v.y - 56, '#ff6060');
+        if (e.by === this.me) this.events.emit('toast', t('m.ff_hit'));
+        break;
+      }
       case 'shake':
         this.cameras.main.shake(300, 0.012);
         break;
@@ -652,9 +663,11 @@ export class GameScene extends Phaser.Scene {
       net.send({ k: 'snap', s: { ...last, ev: [...this.pendingEv, ...last.ev] } });
       this.pendingEv = [];
     }
+    // ukończony prolog odblokowuje Rozdział II
+    const unlocked = win && this.chapter === 1 ? markPrologDone() : false;
     this.time.delayedCall(win ? 600 : 1800, () => {
       this.scene.stop('UI');
-      this.scene.start('End', { stats, mode: this.data0.mode, code: this.data0.code, me: this.me });
+      this.scene.start('End', { stats, mode: this.data0.mode, code: this.data0.code, me: this.me, unlocked });
     });
   }
 
@@ -714,6 +727,7 @@ export class GameScene extends Phaser.Scene {
         v.place(ps.face, ps.down || ps.kd > 0, v.z);
       }
       v.stars.setVisible(!!ps?.down || (c === this.me ? this.kdT > 0 : (ps?.kd ?? 0) > 0));
+      this.renderAnger(v, dt);
     }
 
     // NPC
@@ -813,6 +827,24 @@ export class GameScene extends Phaser.Scene {
         this.events.emit('level', lvl);
       }
     }
+  }
+
+  /** Animacja wkurzenia gracza (friendly fire): czerwienieje, drży, tupie, para z uszu. */
+  private renderAnger(v: CharView, dt: number) {
+    if (v.angerT <= 0) return;
+    v.angerT -= dt;
+    if (v.angerT <= 0) {
+      v.sprite.clearTint();
+      v.anger.setVisible(false);
+      v.steam.setVisible(false);
+      return;
+    }
+    const flick = Math.floor(this.time.now / 90) % 2 === 0;
+    v.sprite.setTint(flick ? 0xff5050 : 0xffa0a0);
+    v.sprite.x += Math.round(Math.sin(this.time.now / 22) * 1.5);
+    v.anger.setVisible(true).setScale(1 + Math.abs(Math.sin(this.time.now / 120)) * 0.4);
+    v.steam.setVisible(true);
+    if (Math.random() < dt * 5) this.spawnDust(v.x + Phaser.Math.Between(-6, 6), v.y);
   }
 
   // --- świat ------------------------------------------------------------------

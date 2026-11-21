@@ -22,18 +22,31 @@ describe('Rozdział II — miasto', () => {
     expect(sim.npcs.every((n) => n.role !== 'thug')).toBe(true);
   });
 
-  it('wyjście wymaga obu graczy albo czekania', () => {
+  it('wyjście wymaga obu graczy przy tym samym wyjściu', () => {
     const sim = citySim();
     const seq = sim.rules.seq;
-    // tylko Polak przy prawej krawędzi
-    run(sim, 1, { pole: input(955, 200, { ar: seq }), romanian: input(400, 220, { ar: seq }) });
+    // tylko Polak przy prawej krawędzi — nawet po długim czekaniu nic się nie dzieje
+    const { events } = run(sim, 6, { pole: input(955, 200, { ar: seq }), romanian: input(400, 220, { ar: seq }) });
     expect(sim.snapshot().city?.ar).toBe('baza');
-    run(sim, 2.5, { pole: input(955, 200, { ar: seq }), romanian: input(400, 220, { ar: seq }) });
+    expect(sim.snapshot().city?.wait).toBe(1);
+    expect(events.filter((e) => e.e === 'msg' && e.s === 'm.wait_exit').length).toBe(1);
+    // gracze przy przeciwnych krawędziach też nie przechodzą
+    run(sim, 1, { pole: input(955, 200, { ar: seq }), romanian: input(5, 220, { ar: seq }) });
+    expect(sim.snapshot().city?.ar).toBe('baza');
+    // obaj przy prawej krawędzi
+    run(sim, 0.2, { pole: input(955, 200, { ar: seq }), romanian: input(955, 220, { ar: seq }) });
     const s = sim.snapshot();
     expect(s.city?.ar).toBe('bahnhof');
-    // obaj stoją przy lewej krawędzi nowego obszaru
     expect(s.p.romanian.x).toBe(40);
     expect(s.p.pole.x).toBe(40);
+  });
+
+  it('leżącego kumpla trzeba podnieść, zanim się przejdzie dalej', () => {
+    const sim = citySim();
+    const seq = sim.rules.seq;
+    sim.players.romanian.down = true;
+    run(sim, 4, { pole: input(955, 200, { ar: seq }), romanian: input(400, 220, { ar: seq }) });
+    expect(sim.snapshot().city?.ar).toBe('baza');
   });
 
   it('stara pozycja od klienta nie cofa gracza po zmianie obszaru', () => {

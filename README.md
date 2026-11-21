@@ -29,6 +29,7 @@ może mieć swój język — host wysyła tylko klucze tłumaczeń (`src/i18n/`)
 **Walka** — powalony wróg (3 ciosy z rzędu, cios w skoku lub w biegu) da się podnieść (AKCJA) i rzucić (BIJ)
 w innych. Z ulicy podnosi się kosze, skrzynki, butelki, opony (rzut) oraz pachołki, grabie, bagietki (broń).
 Seria trafień przewraca też gracza; ciosy wroga można przeskoczyć albo zablokować.
+W co-opie działa **friendly fire**: ciosy i rzuty trafiają też kumpla (połowa obrażeń) — a ten się wkurza.
 
 **Postacie**
 - **Polak** — pałka: mocne ciosy, rozwala kłódki, stoi na czatach przy aucie.
@@ -47,8 +48,9 @@ Znokautowanych można przeszukać (AKCJA). Jeśli kumpel padnie — podnieś go 
 3. **Willowe osiedle** — Rumun otwiera auto, Polak stoi na czatach, potem **obaj** wsiadają i uciekają.
 
 **Rozdział II — Ordnungsburg**
+- Odblokowuje się po ukończeniu prologu (w tej przeglądarce). KONTYNUUJ i HASŁO działają zawsze.
 - Miasto: `holownia ← Altstadt ← Stadion ← BAZA → Bahnhof → Kleingarten → Industrie`. W co-opie przejście
-  do sąsiedniej dzielnicy, gdy obaj stoją przy krawędzi (albo po 3 s czekania).
+  do sąsiedniej dzielnicy dopiero, gdy obaj stoją przy tej samej krawędzi (leżącego trzeba najpierw podnieść).
 - **Baza** (sklepy pani Haliny i Nea Costela) jest bezpieczna i tu zapisuje się gra.
 - **Statystyki** (Siła, Kopnięcie, Rzut, Zwinność, Obrona, Lekka ręka, Wytrzymałość, Twardy łeb) rosną tylko
   od jedzenia (zjedzone na miejscu albo z ekwipunku) i nagród — nie ma punktów doświadczenia.

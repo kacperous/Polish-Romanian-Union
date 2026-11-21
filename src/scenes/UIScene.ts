@@ -3,7 +3,6 @@ import { t } from '../i18n';
 import type { GameScene } from './GameScene';
 import { CharId } from '../game/constants';
 import { ALL_STAMPS, CITY, CityAreaId, STAMP_COUNT } from '../game/data/city';
-import { EXIT_WAIT } from '../game/chapters/city';
 import type { CitySnap } from '../game/types';
 import { controls, isTouchDevice } from '../game/Controls';
 import { FONT, txt } from '../ui';
@@ -331,7 +330,7 @@ export class UIScene extends Phaser.Scene {
     this.exitL?.setText(x < near ? label('L') : '');
     this.exitR?.setText(x > area.w - near ? label('R') : '');
     if (c.wait > 0) {
-      const w = `${t('hud.waiting')} ${Math.ceil((1 - c.wait) * EXIT_WAIT)}`;
+      const w = t('hud.waiting');
       if (x < near) this.exitL?.setText(`${label('L')}\n${w}`);
       else if (x > area.w - near) this.exitR?.setText(`${label('R')}\n${w}`);
     }

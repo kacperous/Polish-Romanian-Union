@@ -4,7 +4,7 @@ import { button, Button, COLORS, menuBackdrop, txt } from '../ui';
 import { net } from '../net/Net';
 import { CharId } from '../game/constants';
 import type { GameStartData } from '../game/types';
-import { loadLocal, SaveData } from '../game/save';
+import { isPrologDone, loadLocal, SaveData } from '../game/save';
 
 /** Co startujemy: prolog, nowy Rozdział II, kontynuacja z zapisu albo z hasła. */
 type ChapterSel = 'prolog' | 'new' | 'continue' | 'pass';
@@ -29,6 +29,8 @@ export class LobbyScene extends Phaser.Scene {
   private sel: ChapterSel = 'prolog';
   private passSave: SaveData | null = null;
   private localSave: SaveData | null = null;
+  /** Rozdział II (nowa gra) dopiero po ukończeniu prologu */
+  private ch2Open = false;
   private selBtns: Partial<Record<ChapterSel, Button>> = {};
   private selT?: Phaser.GameObjects.Text;
 
@@ -47,6 +49,7 @@ export class LobbyScene extends Phaser.Scene {
     this.selT = undefined;
     this.passSave = null;
     this.localSave = loadLocal();
+    this.ch2Open = isPrologDone();
     this.sel = this.localSave ? 'continue' : 'prolog';
     menuBackdrop(this);
 
@@ -68,7 +71,7 @@ export class LobbyScene extends Phaser.Scene {
     if (this.mode !== 'guest') {
       const opts: [ChapterSel, string, number][] = [
         ['prolog', t('lobby.ch_prolog'), COLORS.grey],
-        ['new', t('lobby.ch_new'), COLORS.grey],
+        ['new', this.ch2Open ? t('lobby.ch_new') : `🔒 ${t('lobby.ch_new')}`, COLORS.grey],
         ['continue', t('lobby.ch_continue'), COLORS.grey],
         ['pass', t('lobby.ch_pass'), COLORS.grey],
       ];
@@ -76,6 +79,12 @@ export class LobbyScene extends Phaser.Scene {
         this.selBtns[k] = button(this, 150 + i * 220, 428, 206, 40, label, COLORS.grey, () => this.choose(k), 16);
       });
       this.selBtns.continue?.setEnabled(!!this.localSave);
+      if (!this.ch2Open) {
+        // zablokowany przycisk nie reaguje — dajemy podpowiedź po najechaniu / dotknięciu
+        this.selBtns.new?.setEnabled(false);
+        const hit = this.add.zone(370, 428, 206, 40).setInteractive();
+        hit.on('pointerup', () => this.status.setColor('#ffb060').setText(t('lobby.ch_locked')));
+      }
     } else {
       this.selT = txt(this, 480, 428, '', 20, '#ffe040', 5);
     }
@@ -188,6 +197,10 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private choose(k: ChapterSel) {
+    if (k === 'new' && !this.ch2Open) {
+      this.status.setColor('#ffb060').setText(t('lobby.ch_locked'));
+      return;
+    }
     if (k === 'pass') {
       this.scene.launch('Password', {
         onDone: (d: SaveData | null) => {
@@ -240,7 +253,8 @@ export class LobbyScene extends Phaser.Scene {
     this.status.setColor('#ffffff').setText(s);
     this.startBtn?.setEnabled(canStart);
     for (const [k, b] of Object.entries(this.selBtns) as [ChapterSel, Button][]) {
-      b.setAlpha(k === 'continue' && !this.localSave ? 0.35 : k === this.sel ? 1 : 0.6);
+      const off = (k === 'continue' && !this.localSave) || (k === 'new' && !this.ch2Open);
+      b.setAlpha(off ? 0.35 : k === this.sel ? 1 : 0.6);
       b.setScale(k === this.sel ? 1.06 : 1);
     }
   }

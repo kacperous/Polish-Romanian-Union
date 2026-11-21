@@ -44,8 +44,6 @@ export function emptyCityState(): CityState {
   return { stamps: 0, gnomes: 0, flags: 0, pfand: 0 };
 }
 
-/** Ile sekund czeka się przy wyjściu na kumpla, zanim zostanie „dociągnięty”. */
-export const EXIT_WAIT = 3;
 const EDGE = 14;
 
 export class CityRules implements ChapterRules {
@@ -207,10 +205,9 @@ export class CityRules implements ChapterRules {
       }
       return;
     }
-    // wyjścia na krawędziach
+    // wyjścia na krawędziach — przejście dopiero, gdy obaj gracze stoją przy tym samym wyjściu
     const active = Object.values(sim.players).filter((p) => p.present && !p.down && !p.shop);
-    let side: 'L' | 'R' | null = null;
-    let atExit = 0;
+    const at = { L: 0, R: 0 };
     for (const p of active) {
       const s = p.in.x < EDGE ? 'L' : p.in.x > this.area.w - EDGE ? 'R' : null;
       if (!s) continue;
@@ -220,21 +217,22 @@ export class CityRules implements ChapterRules {
         sim.hint(p.id, 'h.gate');
         continue;
       }
-      side = s;
-      atExit++;
+      at[s]++;
     }
-    if (!side) {
+    if (!at.L && !at.R) {
       this.exitT = 0;
       return;
     }
     const everyone = Object.values(sim.players).filter((p) => p.present).length;
-    this.exitT += dt;
-    if (atExit >= everyone || this.exitT >= EXIT_WAIT) {
+    const side = (['L', 'R'] as const).find((k) => at[k] >= everyone);
+    if (side) {
       const ex = this.area.exits.find((e) => e.side === side)!;
       this.load(ex.to, side);
-    } else if (this.exitT < dt * 1.5) {
-      sim.ev({ e: 'msg', s: 'm.wait_exit' });
+      return;
     }
+    // jeden już czeka — przypomnij drugiemu (kumpel leżący też musi wstać)
+    if (this.exitT === 0) sim.ev({ e: 'msg', s: 'm.wait_exit' });
+    this.exitT += dt;
   }
 
   chooseAct(p: PlayerSim): ActChoice | null {
@@ -368,7 +366,7 @@ export class CityRules implements ChapterRules {
         seq: this.seq,
         stamps: this.state.stamps,
         gnomes: this.state.gnomes,
-        wait: Math.min(1, this.exitT / EXIT_WAIT),
+        wait: this.exitT > 0 ? 1 : 0,
         boss: this.bossBar(),
         car: this.car ? ([Math.round(this.car.x), this.car.gone ? 1 : 0] as [number, 0 | 1]) : null,
       },

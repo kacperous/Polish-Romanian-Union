@@ -11,7 +11,7 @@ export class EndScene extends Phaser.Scene {
     super('End');
   }
 
-  create(data: { stats: Stats; mode: 'solo' | 'host' | 'guest'; code?: string; me: CharId }) {
+  create(data: { stats: Stats; mode: 'solo' | 'host' | 'guest'; code?: string; me: CharId; unlocked?: boolean }) {
     const { stats, mode } = data;
     menuBackdrop(this);
     playMusic(this, 'music_menu', 0.3);
@@ -25,6 +25,10 @@ export class EndScene extends Phaser.Scene {
       const car = this.add.sprite(-120, 236, 'car', 1).setScale(3);
       this.tweens.add({ targets: car, x: 1100, duration: 3200, repeat: -1, delay: 300 });
       txt(this, 480, 290, t('end.home'), 20, '#ffe040', 5);
+      if (data.unlocked) {
+        const u = txt(this, 480, 172, t('end.unlocked'), 26, '#7dff7d', 6);
+        this.tweens.add({ targets: u, scale: { from: 1, to: 1.08 }, duration: 500, yoyo: true, repeat: -1 });
+      }
     } else {
       const cop = this.add.sprite(420, 250, 'char_polizei').setScale(4).play('char_polizei-idle');
       const p = this.add.sprite(540, 268, `char_${data.me}`, 10).setScale(4);

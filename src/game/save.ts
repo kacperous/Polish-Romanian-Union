@@ -162,3 +162,25 @@ export function loadLocal(): SaveData | null {
     return null;
   }
 }
+
+/** Rozdział II odblokowuje się po ukończeniu prologu (zapamiętane w przeglądarce). */
+export const PROLOG_KEY = 'unia_prolog_ukonczony';
+
+export function isPrologDone(): boolean {
+  try {
+    return localStorage.getItem(PROLOG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Zaznacza ukończenie prologu; zwraca true, jeśli to pierwsze ukończenie (właśnie odblokowano). */
+export function markPrologDone(): boolean {
+  const first = !isPrologDone();
+  try {
+    localStorage.setItem(PROLOG_KEY, '1');
+  } catch {
+    /* brak pamięci — trudno */
+  }
+  return first;
+}

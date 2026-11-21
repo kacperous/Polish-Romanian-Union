@@ -13,9 +13,11 @@ nazwanymi członkami, bossowie z gadką przed walką, bronie podnoszone z ulicy 
 
 Wszystkie etapy z sekcji 5 są wdrożone (PR #1). Decyzje z sekcji 6 podjęte tak:
 - **wspólna kasa Unii** (jedno pole `money` dla obu graczy),
-- **bez friendly fire** (do ewentualnego dodania jako opcja w lobby),
-- przejście między dzielnicami: **obaj przy wyjściu albo dociągnięcie po 3 s**,
-- Rozdział II **dostępny od razu** z lobby (PROLOG / ROZDZIAŁ II / KONTYNUUJ / HASŁO).
+- **friendly fire włączony**: ciosy, rzucone przedmioty i rzuceni wrogowie trafiają kumpla (połowa obrażeń,
+  blok działa); trafiony się wkurza (czerwienieje, drży, tupie, para z uszu, okrzyk „FRATE!” / „EJ!”),
+- przejście między dzielnicami: **tylko gdy obaj stoją przy tym samym wyjściu** (leżącego trzeba podnieść),
+- Rozdział II **odblokowuje się po ukończeniu prologu** (zapamiętane w przeglądarce); KONTYNUUJ i HASŁO
+  są dostępne zawsze, bo same są dowodem postępu (np. z innego urządzenia).
 
 Różnice względem pierwotnego planu: blok to przytrzymanie AKCJI bez celu (bez dodatkowego przycisku),
 butelka w automacie daje 1 € (kasa jest w pełnych euro), bossowie walczą w swoich dzielnicach zamiast w osobnych obszarach.

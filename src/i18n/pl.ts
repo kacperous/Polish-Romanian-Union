@@ -253,7 +253,7 @@ export const pl = {
   'h.pfand': "Automat Pfand: przynieś butelkę zwrotną (podnieś AKCJĄ)!",
   'h.gate': "Brama holowni zamknięta — potrzebujecie wszystkich 5 pieczątek!",
   'f.pfand': "PFAND +1 €",
-  'm.wait_exit': "Kumpel czeka przy wyjściu — chodź albo zostaniesz dociągnięty!",
+  'm.wait_exit': "Kumpel czeka przy wyjściu — dołącz do niego (leżącego trzeba najpierw podnieść)!",
   'm.strafzettel': "STRAFZETTEL! Mandat zjadł połowę kasy (−{v} €). Wracacie do bazy...",
   'm.respawn': "Pani Halina was opatrzyła. Do roboty!",
   'm.saved': "Gra zapisana (hasło w menu pauzy).",
@@ -382,6 +382,15 @@ export const pl = {
   'cry.b_klaus.0': "MEIN ABSCHLEPPWAGEN!",
   'cry.b_klaus.1': "DAS KOSTET EXTRA!",
   'cry.b_klaus.2': "NEEEIN!",
+  'ff.pole.0': "EJ!",
+  'ff.pole.1': "UWAŻAJ, KOLEGO!",
+  'ff.pole.2': "NO WEŹ!",
+  'ff.romanian.0': "FRATE!",
+  'ff.romanian.1': "CE FACI?!",
+  'ff.romanian.2': "AU! SERIO?!",
+  'm.ff_hit': "Trafiłeś kumpla! Teraz się wkurzył...",
+  'end.unlocked': "ODBLOKOWANO: ROZDZIAŁ II!",
+  'lobby.ch_locked': "Rozdział II odblokuje się po ukończeniu prologu.",
 };
 
 export type Dict = Record<keyof typeof pl, string>;
