@@ -5,7 +5,8 @@
 import { LEVEL_W, NpcKind } from '../constants';
 import type { ItemKind } from './items';
 
-export type Role = 'walker' | 'guard' | 'police';
+/** walker — przechodzień, guard — stróż, police — policja, thug — członek bandy (atakuje, gdy zobaczy) */
+export type Role = 'walker' | 'guard' | 'police' | 'thug';
 
 export interface SpawnDef {
   kind: NpcKind;

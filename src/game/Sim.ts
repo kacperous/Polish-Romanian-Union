@@ -4,16 +4,16 @@
  */
 import {
   CharId,
-  ITEM_POS,
   NpcKind,
   PLAYER_START,
   WALK_BOTTOM,
   WALK_TOP,
-  WORLD_W,
   AnimName,
 } from './constants';
 import { mulberry32, randomSeed, Rng } from './rng';
-import { PROLOG, Role } from './data/areas';
+import type { Role } from './data/areas';
+import type { ActChoice, ChapterRules } from './chapters/rules';
+import { PrologRules } from './chapters/prolog';
 import { ITEMS, ItemKind, NPC_THROW_DMG } from './data/items';
 import { GOODS, INV_SLOTS, SHOPS, ShopId } from './data/shops';
 import { canLearn, hasTech, techBit, TechId } from './data/techniques';
@@ -106,6 +106,8 @@ export interface Npc {
   grabs: boolean;
   /** Brzytwa: przez ten czas „nie widzi” kradzieży */
   blindT: number;
+  /** do usunięcia (pokonany członek bandy znika) */
+  gone: boolean;
 }
 
 export interface Item {
@@ -179,6 +181,8 @@ export interface Progress {
 export interface SimOptions {
   seed?: number;
   progress?: Progress;
+  /** fabryka zasad rozdziału (domyślnie prolog) */
+  rules?: (sim: Sim) => ChapterRules;
 }
 
 const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
@@ -193,6 +197,8 @@ const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
   lift: 0.25,
   drop: 0.1,
   pickup: 0.15,
+  shop: 0.2,
+  pfand: 0.5,
 };
 
 const SNEAKY: ActKind[] = ['pickpocket', 'gnome', 'lockpick', 'carlock', 'bike'];
@@ -227,7 +233,9 @@ export class Sim {
   items: Item[] = [];
   coins: Coin[] = [];
   /** szerokość bieżącego obszaru */
-  areaW = WORLD_W;
+  areaW = 2880;
+  /** zasady bieżącego rozdziału (cele, przejścia, przegrana) */
+  rules: ChapterRules;
   private nextId = 1;
   stage = 0;
   money = 0;
@@ -235,13 +243,6 @@ export class Sim {
   kos = 0;
   steals = 0;
   time = 0;
-  gnome: 0 | 1 = 0;
-  lockHp = 3;
-  bike: 0 | 1 = 0;
-  carUnlocked: 0 | 1 = 0;
-  carGone: 0 | 1 = 0;
-  carX = ITEM_POS.car.x;
-  carT = 0;
   ended = false;
   private events: GameEvent[] = [];
   private policeCooldown = 0;
@@ -280,13 +281,14 @@ export class Sim {
       };
     };
     this.players = { pole: mk('pole'), romanian: mk('romanian') };
-    this.spawnLevelNpcs();
+    this.rules = opts.rules ? opts.rules(this) : new PrologRules(this);
+    this.rules.init();
   }
 
-  private rand(a: number, b: number) {
+  rand(a: number, b: number) {
     return a + this.rng() * (b - a);
   }
-  private randi(a: number, b: number) {
+  randi(a: number, b: number) {
     return Math.floor(this.rand(a, b + 1));
   }
 
@@ -327,14 +329,10 @@ export class Sim {
       coins: 0,
       grabs: role !== 'police' && this.rng() < 0.4,
       blindT: 0,
+      gone: false,
     };
     this.npcs.push(n);
     return n;
-  }
-
-  private spawnLevelNpcs() {
-    for (const sp of PROLOG.spawns) this.addNpc(sp.kind, sp.role, sp.x, sp.y, sp.minX, sp.maxX, sp.face ?? -1);
-    for (const it of PROLOG.items ?? []) this.addItem(it.kind, it.x, it.y);
   }
 
   addItem(kind: ItemKind, x: number, y: number): Item {
@@ -343,11 +341,11 @@ export class Sim {
     return it;
   }
 
-  private item(id: number): Item | undefined {
+  item(id: number): Item | undefined {
     return id < 0 ? undefined : this.items.find((q) => q.id === id);
   }
 
-  private removeItem(it: Item) {
+  removeItem(it: Item) {
     this.items = this.items.filter((q) => q !== it);
     for (const p of Object.values(this.players)) if (p.holdItem === it.id) p.holdItem = -1;
     for (const n of this.npcs) if (n.holdItem === it.id) n.holdItem = -1;
@@ -373,26 +371,26 @@ export class Sim {
   }
 
   // -------------------------------------------------------------------------
-  private ev(e: GameEvent) {
+  ev(e: GameEvent) {
     this.events.push(e);
   }
-  private sfx(k: string) {
+  sfx(k: string) {
     this.ev({ e: 'sfx', k });
   }
-  private txt(s: string, x: number, y: number, c = '#ffffff') {
+  txt(s: string, x: number, y: number, c = '#ffffff') {
     this.ev({ e: 'txt', s, x: Math.round(x), y: Math.round(y), c });
   }
-  private hint(who: CharId, s: string) {
+  hint(who: CharId, s: string) {
     if (this.hintCd[who] > 0) return;
     this.hintCd[who] = 2.5;
     this.ev({ e: 'msg', s, who });
   }
 
-  private mate(p: PlayerSim): PlayerSim {
+  mate(p: PlayerSim): PlayerSim {
     return this.players[p.id === 'pole' ? 'romanian' : 'pole'];
   }
 
-  private alive(): PlayerSim[] {
+  alive(): PlayerSim[] {
     return Object.values(this.players).filter((p) => p.present && !p.down && !p.inCar && !p.shop);
   }
 
@@ -492,18 +490,18 @@ export class Sim {
     this.ev({ e: 'eat', who: p.id, good: goodId, ups });
   }
 
-  private npc(id: number): Npc | undefined {
+  npc(id: number): Npc | undefined {
     return this.npcs.find((q) => q.id === id);
   }
 
   /** Czy NPC widzi punkt (stoi przodem do niego i blisko). */
-  private sees(n: Npc, x: number, y: number, range = 150): boolean {
+  sees(n: Npc, x: number, y: number, range = 150): boolean {
     if (DISABLED.includes(n.state)) return false;
     const dx = x - n.x;
     return n.face * dx > -4 && Math.abs(dx) < range && Math.abs(y - n.y) < 70;
   }
 
-  private enrage(n: Npc, by?: PlayerSim) {
+  enrage(n: Npc, by?: PlayerSim) {
     if (n.state === 'ko') return;
     if (!n.rage) {
       n.rage = true;
@@ -511,7 +509,8 @@ export class Sim {
       n.hp += RAGE_HP;
       this.txt(n.kind === 'polizei' ? 'HALT!' : 'WUT!', n.x, n.y - 46, '#ff3b3b');
       this.sfx('rage');
-      this.alarm += n.kind === 'polizei' ? 25 : 10;
+      // banda nie dzwoni na policję
+      if (n.role !== 'thug') this.alarm += n.kind === 'polizei' ? 25 : 10;
     }
     n.warn = false;
     n.alertT = 1;
@@ -530,7 +529,15 @@ export class Sim {
       const inp = inputs[id];
       if (inp && p.present) {
         const newAtk = inp.atk;
+        const prevX = p.in.x;
+        const prevY = p.in.y;
+        const stale = (inp.ar ?? 0) !== this.rules.seq;
         p.in = { ...inp, z: inp.z ?? 0, ak: inp.ak ?? 'n' };
+        if (stale) {
+          // klient jeszcze nie wie o zmianie obszaru — zostaw pozycję ustawioną przez symulację
+          p.in.x = prevX;
+          p.in.y = prevY;
+        }
         if (newAtk > p.lastAtk) {
           p.lastAtk = newAtk;
           if (!p.down && !p.inCar && p.kd <= 0) {
@@ -551,24 +558,26 @@ export class Sim {
       for (const p of Object.values(this.players)) if (p.present) this.updateAct(p, dt);
     }
     for (const n of this.npcs) this.updateNpc(n, dt);
+    if (this.npcs.some((n) => n.gone)) this.npcs = this.npcs.filter((n) => !n.gone);
     this.updateItems(dt);
     this.updateCoins(dt);
     this.updateAlarm(dt);
-    this.updateCar(dt);
+    this.rules.update(dt);
     this.checkLose();
     return this.snapshot();
   }
 
   // -------------------------------------------------------------------------
-  private knockOut(n: Npc) {
+  knockOut(n: Npc) {
     this.npcDrop(n);
+    if (n.role === 'thug') this.ev({ e: 'cry', x: Math.round(n.x), y: Math.round(n.y), k: n.kind });
     if (n.coins > 0) {
       this.spawnCoins(n.x, n.y, n.coins);
       n.coins = 0;
     }
     n.hp = 0;
     n.state = 'ko';
-    n.t = 10;
+    n.t = n.role === 'thug' ? 3 : 10;
     n.z = 0;
     n.vz = 0;
     n.rage = false;
@@ -577,7 +586,7 @@ export class Sim {
     this.txt('K.O.!', n.x, n.y - 44, '#ffe040');
   }
 
-  private knockDown(n: Npc, t = 1.1) {
+  knockDown(n: Npc, t = 1.1) {
     this.npcDrop(n);
     n.state = 'down';
     n.t = t;
@@ -585,7 +594,7 @@ export class Sim {
   }
 
   /** Zadaje obrażenia NPC; zwraca true, jeśli padł (K.O.). */
-  private damageNpc(n: Npc, dmg: number, knock: boolean, by?: PlayerSim): boolean {
+  damageNpc(n: Npc, dmg: number, knock: boolean, by?: PlayerSim): boolean {
     n.hp -= dmg;
     n.warn = false;
     if (n.hp <= 0) {
@@ -641,32 +650,14 @@ export class Sim {
       this.ev({ e: 'fx', k: 'dust', x: x + face * 10, y });
       this.removeItem(weapon);
     }
-    // kłódka roweru — tylko pałka Polaka (albo kopniaki w solo)
-    if (this.stage === 1 && this.lockHp > 0) {
-      const dx = (ITEM_POS.bike.x - x) * face;
-      if (dx > -6 && dx < range + 10 && Math.abs(ITEM_POS.bike.y - y) < 20) {
-        if (isPole || this.solo) {
-          this.lockHp--;
-          hitSomething = true;
-          this.sfx('hit');
-          this.ev({ e: 'fx', k: 'hit', x: ITEM_POS.bike.x - 6, y: ITEM_POS.bike.y - 8 });
-          this.alarm += 8;
-          if (this.lockHp <= 0) {
-            this.txt('f.lock_broken', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
-            this.sfx('pickup');
-          } else this.txt(`${this.lockHp}`, ITEM_POS.bike.x, ITEM_POS.bike.y - 26, '#ffffff');
-        } else {
-          this.hint(p.id, 'h.kick_lock');
-        }
-      }
-    }
+    if (this.rules.onAttack(p, x, y, face, range)) hitSomething = true;
     if (hitSomething) this.witnesses(p, x, y);
   }
 
   /** Świadkowie bójki podnoszą alarm i czasem się wkurzają. */
   private witnesses(p: PlayerSim, x: number, y: number) {
     for (const w of this.npcs) {
-      if (w.rage || DISABLED.includes(w.state)) continue;
+      if (w.rage || w.role === 'thug' || DISABLED.includes(w.state)) continue;
       if (this.sees(w, x, y, 130)) {
         this.alarm += 5;
         w.alertT = 1.2;
@@ -695,7 +686,7 @@ export class Sim {
   }
 
   /** Puszcza trzymanego wroga (przewrócenie gracza, AKCJA). */
-  private releaseHeld(p: PlayerSim) {
+  releaseHeld(p: PlayerSim) {
     const n = this.npc(p.holdNpc);
     p.holdNpc = -1;
     if (!n || n.state !== 'held') return;
@@ -721,7 +712,7 @@ export class Sim {
       this.sfx('hit');
       this.damageNpc(o, dmg, true, thrower);
     }
-    if (n.x < 4 || n.x > WORLD_W - 4) n.vx = 0;
+    if (n.x < 4 || n.x > this.areaW - 4) n.vx = 0;
     if (n.z <= 0) {
       n.z = 0;
       n.vz = 0;
@@ -759,7 +750,7 @@ export class Sim {
     it.y = n.y;
   }
 
-  private playerDrop(p: PlayerSim) {
+  playerDrop(p: PlayerSim) {
     const it = this.item(p.holdItem);
     p.holdItem = -1;
     if (!it || it.state !== 'held') return;
@@ -891,34 +882,19 @@ export class Sim {
   }
 
   // -------------------------------------------------------------------------
-  private near(p: PlayerSim, x: number, y: number, rx: number, ry: number) {
+  near(p: PlayerSim, x: number, y: number, rx: number, ry: number) {
     return Math.abs(p.in.x - x) < rx && Math.abs(p.in.y - y) < ry;
   }
 
-  private chooseAct(p: PlayerSim): { kind: ActKind; target: number } {
+  private chooseAct(p: PlayerSim): ActChoice {
     const other = this.mate(p);
     if (p.holdNpc >= 0) return { kind: 'drop', target: p.holdNpc };
-    if (p.holdItem >= 0) return { kind: 'drop', target: p.holdItem };
     // reanimacja kumpla
     if (other.present && other.down && this.near(p, other.in.x, other.in.y, 28, 16)) return { kind: 'revive', target: 100 };
-    // cele poziomów
-    if (this.stage === 0 && !this.gnome && this.near(p, ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return { kind: 'gnome', target: 200 };
-    if (this.stage === 1 && !this.bike && this.near(p, ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
-      if (this.lockHp > 0) {
-        if (p.id === 'romanian') return { kind: 'lockpick', target: 201 };
-        this.hint(p.id, 'h.bike_locked');
-        return { kind: '', target: -1 };
-      }
-      return { kind: 'bike', target: 202 };
-    }
-    if (this.stage === 2 && !this.carGone && this.near(p, this.carX, ITEM_POS.car.y, 56, 22)) {
-      if (!this.carUnlocked) {
-        if (p.id === 'romanian' || !other.present) return { kind: 'carlock', target: 203 };
-        this.hint(p.id, 'h.only_rom_car');
-        return { kind: '', target: -1 };
-      }
-      if (!p.inCar) return { kind: 'enter', target: 204 };
-    }
+    // cele rozdziału (np. automat Pfand przy butelce w ręku)
+    const special = this.rules.chooseAct(p);
+    if (special) return special;
+    if (p.holdItem >= 0) return { kind: 'drop', target: p.holdItem };
     // przewrócony wróg — podnieś i rzuć
     for (const n of this.npcs) {
       if (n.state !== 'down' || n.z > 0) continue;
@@ -992,16 +968,7 @@ export class Sim {
 
     // wykrycie przy cichych akcjach
     if (SNEAKY.includes(kind) && this.caught(p, kind)) return;
-    // auto: Polak musi stać na czatach
-    if (kind === 'carlock') {
-      const other = this.players.pole;
-      if (p.id === 'romanian' && other.present && !other.down && !this.near(other, this.carX, ITEM_POS.car.y, 90, 60)) {
-        this.hint(p.id, 'h.lookout');
-        return;
-      }
-      if (this.rng() < dt * 6) this.sfx('pick');
-    }
-    if (kind === 'lockpick' && this.rng() < dt * 6) this.sfx('pick');
+    if (!this.rules.canProgress(p, kind, dt)) return;
 
     let time = ACT_TIME[kind] * (HANDY.includes(kind) ? sneakTimeMult(p.stats) : 1);
     if (kind === 'loot' && this.has(p, 'krawaciarz')) time *= 0.5;
@@ -1099,52 +1066,12 @@ export class Sim {
         this.txt('f.revive', other.in.x, other.in.y - 44, '#7dff7d');
         break;
       }
-      case 'gnome':
-        this.gnome = 1;
-        this.steals++;
-        this.sfx('pickup');
-        this.txt('f.gnome', ITEM_POS.gnome.x, ITEM_POS.gnome.y - 30, '#ffe040');
-        this.money += 50;
-        this.advanceStage(1, 'm.gnome_done');
-        break;
-      case 'lockpick':
-        this.lockHp = 0;
-        this.sfx('pickup');
-        this.txt('f.unlocked', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
-        break;
-      case 'bike':
-        this.bike = 1;
-        this.steals++;
-        this.money += 120;
-        this.sfx('pickup');
-        this.txt('f.bike', ITEM_POS.bike.x, ITEM_POS.bike.y - 30, '#ffe040');
-        this.advanceStage(2, 'm.bike_done');
-        break;
-      case 'carlock':
-        this.carUnlocked = 1;
-        this.sfx('pickup');
-        this.txt('f.car_unlocked', this.carX, ITEM_POS.car.y - 50, '#ffe040');
-        this.ev({ e: 'msg', s: 'm.car_open' });
-        break;
-      case 'enter':
-        p.inCar = true;
-        this.releaseHeld(p);
-        this.playerDrop(p);
-        this.sfx('click');
-        if (Object.values(this.players).every((q) => !q.present || q.inCar)) {
-          this.carGone = 1;
-          this.carT = 0;
-          this.sfx('engine');
-          this.steals++;
-          this.ev({ e: 'msg', s: 'm.escape' });
-        } else {
-          this.ev({ e: 'msg', s: 'm.wait_car', who: p.id });
-        }
-        break;
+      default:
+        this.rules.completeAct(p, kind, target);
     }
   }
 
-  private advanceStage(stage: number, msg: string) {
+  advanceStage(stage: number, msg: string) {
     this.stage = stage;
     this.ev({ e: 'stage', stage });
     this.ev({ e: 'msg', s: msg });
@@ -1163,7 +1090,7 @@ export class Sim {
     }
     if (n.state === 'thrown') {
       this.updateThrown(n, dt);
-      n.x = Math.max(4, Math.min(WORLD_W - 4, n.x));
+      n.x = Math.max(4, Math.min(this.areaW - 4, n.x));
       return;
     }
     // odrzut
@@ -1172,13 +1099,18 @@ export class Sim {
       n.vx *= Math.pow(0.002, dt);
       if (Math.abs(n.vx) < 3) n.vx = 0;
     }
-    n.x = Math.max(4, Math.min(WORLD_W - 4, n.x));
+    n.x = Math.max(4, Math.min(this.areaW - 4, n.x));
     n.y = Math.max(WALK_TOP, Math.min(WALK_BOTTOM, n.y));
 
     const spd = n.speed * (n.rage ? 1.7 : 1);
     switch (n.state) {
       case 'ko':
         n.t -= dt;
+        if (n.t <= 0 && n.role === 'thug') {
+          // pokonany członek bandy znika (jak w River City Ransom)
+          n.gone = true;
+          return;
+        }
         if (n.t <= 0) {
           n.state = 'flee';
           n.t = 5;
@@ -1288,6 +1220,16 @@ export class Sim {
         if (n.rage) {
           n.state = 'chase';
           return;
+        }
+        // członek bandy rzuca się na graczy, gdy ich zobaczy
+        if (n.role === 'thug') {
+          for (const p of this.alive()) {
+            const close = Math.abs(p.in.x - n.x) < 40 && Math.abs(p.in.y - n.y) < 24;
+            if (close || this.sees(n, p.in.x, p.in.y, 150)) {
+              this.enrage(n, p);
+              return;
+            }
+          }
         }
         // obracanie się — z ostrzeżeniem "?"
         n.turnT -= dt;
@@ -1436,14 +1378,14 @@ export class Sim {
     if (!raging) this.alarm -= dt * 2.5;
     this.alarm = Math.max(0, Math.min(100, this.alarm));
     this.policeCooldown = Math.max(0, this.policeCooldown - dt);
-    if (this.alarm >= 100 && this.policeCooldown <= 0 && !this.ended) {
+    if (this.alarm >= 100 && this.policeCooldown <= 0 && !this.ended && this.rules.policeAllowed()) {
       const policeAlive = this.npcs.filter((n) => n.role === 'police' && n.state !== 'ko').length;
       if (policeAlive < 4) {
         const alive = this.alive();
         const cx = alive.length ? alive.reduce((s, p) => s + p.in.x, 0) / alive.length : 1500;
         for (const side of [-1, 1]) {
-          const x = Math.max(10, Math.min(WORLD_W - 10, cx + side * 250));
-          const cop = this.addNpc('polizei', 'police', x, this.rand(WALK_TOP + 10, WALK_BOTTOM - 10), 0, WORLD_W, (-side) as 1 | -1);
+          const x = Math.max(10, Math.min(this.areaW - 10, cx + side * 250));
+          const cop = this.addNpc('polizei', 'police', x, this.rand(WALK_TOP + 10, WALK_BOTTOM - 10), 0, this.areaW, (-side) as 1 | -1);
           this.enrage(cop);
         }
         this.sfx('siren');
@@ -1454,25 +1396,10 @@ export class Sim {
     }
   }
 
-  private updateCar(dt: number) {
-    if (!this.carGone) return;
-    this.carT += dt;
-    this.carX += Math.min(260, 40 + this.carT * 140) * dt;
-    if (this.carT > 3.2 && !this.ended) {
-      this.ended = true;
-      this.sfx('win');
-      this.ev({ e: 'end', win: true, reason: 'end.win_reason' });
-    }
-  }
-
   private checkLose() {
     if (this.ended) return;
     const present = Object.values(this.players).filter((p) => p.present);
-    if (present.length && present.every((p) => p.down)) {
-      this.ended = true;
-      this.sfx('lose');
-      this.ev({ e: 'end', win: false, reason: 'end.lose_reason' });
-    }
+    if (present.length && present.every((p) => p.down)) this.rules.onAllDown();
   }
 
   // -------------------------------------------------------------------------
@@ -1561,7 +1488,7 @@ export class Sim {
         return [q.id, q.kind, Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10, Math.round(q.z), holder, q.state === 'thrown' ? 1 : 0];
       }),
       co: this.coins.map((c): CoinSnap => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.t * 10) / 10]),
-      o: { gnome: this.gnome, lockHp: this.lockHp, bike: this.bike, carUnlocked: this.carUnlocked, carGone: this.carGone, carX: Math.round(this.carX) },
+      ...this.rules.snap(),
       money: this.money,
       alarm: Math.round(this.alarm),
       stage: this.stage,

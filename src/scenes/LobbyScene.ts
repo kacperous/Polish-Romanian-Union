@@ -4,6 +4,10 @@ import { button, Button, COLORS, menuBackdrop, txt } from '../ui';
 import { net } from '../net/Net';
 import { CharId } from '../game/constants';
 import type { GameStartData } from '../game/types';
+import { loadLocal, SaveData } from '../game/save';
+
+/** Co startujemy: prolog, nowy Rozdział II, kontynuacja z zapisu albo z hasła. */
+type ChapterSel = 'prolog' | 'new' | 'continue' | 'pass';
 
 type Mode = 'solo' | 'host' | 'guest';
 interface Picks {
@@ -22,6 +26,11 @@ export class LobbyScene extends Phaser.Scene {
   private cards: Record<CharId, Phaser.GameObjects.Rectangle> = {} as never;
   private status!: Phaser.GameObjects.Text;
   private startBtn?: Button;
+  private sel: ChapterSel = 'prolog';
+  private passSave: SaveData | null = null;
+  private localSave: SaveData | null = null;
+  private selBtns: Partial<Record<ChapterSel, Button>> = {};
+  private selT?: Phaser.GameObjects.Text;
 
   constructor() {
     super('Lobby');
@@ -34,6 +43,11 @@ export class LobbyScene extends Phaser.Scene {
     this.guestPresent = false;
     this.offs = [];
     this.startBtn = undefined;
+    this.selBtns = {};
+    this.selT = undefined;
+    this.passSave = null;
+    this.localSave = loadLocal();
+    this.sel = this.localSave ? 'continue' : 'prolog';
     menuBackdrop(this);
 
     if (this.mode === 'solo') {
@@ -49,6 +63,22 @@ export class LobbyScene extends Phaser.Scene {
     }
 
     (['pole', 'romanian'] as CharId[]).forEach((c, i) => this.makeCard(c, i === 0 ? 270 : 690));
+
+    // wybór rozdziału (host / solo); gość widzi wybór hosta
+    if (this.mode !== 'guest') {
+      const opts: [ChapterSel, string, number][] = [
+        ['prolog', t('lobby.ch_prolog'), COLORS.grey],
+        ['new', t('lobby.ch_new'), COLORS.grey],
+        ['continue', t('lobby.ch_continue'), COLORS.grey],
+        ['pass', t('lobby.ch_pass'), COLORS.grey],
+      ];
+      opts.forEach(([k, label], i) => {
+        this.selBtns[k] = button(this, 150 + i * 220, 428, 206, 40, label, COLORS.grey, () => this.choose(k), 16);
+      });
+      this.selBtns.continue?.setEnabled(!!this.localSave);
+    } else {
+      this.selT = txt(this, 480, 428, '', 20, '#ffe040', 5);
+    }
 
     this.status = txt(this, 480, 470, '', 22, '#ffffff', 5);
     button(this, 110, 505, 170, 48, t('lobby.menu'), COLORS.grey, () => this.backToMenu(), 22);
@@ -86,9 +116,10 @@ export class LobbyScene extends Phaser.Scene {
         net.on('relay', (d) => {
           if (d.k === 'lobby') {
             this.picks = d.picks;
+            if (this.selT) this.selT.setText(t('lobby.host_chose', { c: `lobby.ch_${d.sel || 'prolog'}` }));
             this.refresh();
           } else if (d.k === 'start') {
-            this.launch({ mode: 'guest', me: d.guest, code: this.code });
+            this.launch({ mode: 'guest', me: d.guest, code: this.code, chapter: d.chapter === 2 ? 2 : 1 });
           }
         }),
         net.on('peer_left', () => this.backToMenu(t('err.host_left'))),
@@ -103,12 +134,12 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private makeCard(c: CharId, x: number) {
-    const y = 270;
-    const card = this.add.rectangle(x, y, 340, 290, 0x181020, 0.82).setStrokeStyle(4, 0x505060);
+    const y = 252;
+    const card = this.add.rectangle(x, y, 340, 262, 0x181020, 0.82).setStrokeStyle(4, 0x505060);
     this.cards[c] = card;
     const sp = this.add.sprite(x - 90, y + 10, `char_${c}`).setScale(5).play(`char_${c}-idle`);
     if (c === 'romanian') sp.setFlipX(false);
-    txt(this, x + 60, y - 110, t(`char.${c}.up`), 36, c === 'pole' ? '#ff5060' : '#ffd040', 6);
+    txt(this, x + 60, y - 100, t(`char.${c}.up`), 36, c === 'pole' ? '#ff5060' : '#ffd040', 6);
     this.add
       .text(x - 30, y - 70, t(`desc.${c}`), {
         fontFamily: 'Pixelify, monospace',
@@ -118,7 +149,7 @@ export class LobbyScene extends Phaser.Scene {
         wordWrap: { width: 190 },
       })
       .setOrigin(0, 0);
-    this.tags[c] = txt(this, x, y + 120, '', 24, '#7dff7d', 5);
+    this.tags[c] = txt(this, x, y + 108, '', 24, '#7dff7d', 5);
     card.setInteractive({ useHandCursor: true });
     card.on('pointerup', () => this.pick(c));
     sp.setInteractive({ useHandCursor: true }).on('pointerup', () => this.pick(c));
@@ -152,8 +183,36 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private broadcast() {
-    if (this.mode === 'host') net.send({ k: 'lobby', picks: this.picks });
+    if (this.mode === 'host') net.send({ k: 'lobby', picks: this.picks, sel: this.sel });
     this.refresh();
+  }
+
+  private choose(k: ChapterSel) {
+    if (k === 'pass') {
+      this.scene.launch('Password', {
+        onDone: (d: SaveData | null) => {
+          if (d) {
+            this.passSave = d;
+            this.sel = 'pass';
+            this.status.setColor('#7dff7d');
+          }
+          this.broadcast();
+          if (d) this.status.setText(t('lobby.pass_ok'));
+        },
+      });
+      return;
+    }
+    this.sel = k;
+    this.sound.play('click', { volume: 0.5 });
+    this.broadcast();
+  }
+
+  /** Dane startu wybranego rozdziału. */
+  private chapterStart(): { chapter: 1 | 2; save?: SaveData } {
+    if (this.sel === 'prolog') return { chapter: 1 };
+    if (this.sel === 'continue' && this.localSave) return { chapter: 2, save: this.localSave };
+    if (this.sel === 'pass' && this.passSave) return { chapter: 2, save: this.passSave };
+    return { chapter: 2 };
   }
 
   private refresh() {
@@ -180,6 +239,10 @@ export class LobbyScene extends Phaser.Scene {
     }
     this.status.setColor('#ffffff').setText(s);
     this.startBtn?.setEnabled(canStart);
+    for (const [k, b] of Object.entries(this.selBtns) as [ChapterSel, Button][]) {
+      b.setAlpha(k === 'continue' && !this.localSave ? 0.35 : k === this.sel ? 1 : 0.6);
+      b.setScale(k === this.sel ? 1.06 : 1);
+    }
   }
 
   private copyLink() {
@@ -190,13 +253,14 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private startGame() {
+    const ch = this.chapterStart();
     if (this.mode === 'solo') {
-      if (this.picks.host) this.launch({ mode: 'solo', me: this.picks.host });
+      if (this.picks.host) this.launch({ mode: 'solo', me: this.picks.host, ...ch });
       return;
     }
     if (!this.picks.host || !this.picks.guest || !this.guestPresent) return;
-    net.send({ k: 'start', host: this.picks.host, guest: this.picks.guest });
-    this.launch({ mode: 'host', me: this.picks.host, code: this.code });
+    net.send({ k: 'start', host: this.picks.host, guest: this.picks.guest, chapter: ch.chapter });
+    this.launch({ mode: 'host', me: this.picks.host, code: this.code, ...ch });
   }
 
   private launch(d: GameStartData) {

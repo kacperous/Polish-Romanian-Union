@@ -21,6 +21,9 @@ import {
 } from '../game/constants';
 import { Sim } from '../game/Sim';
 import { PROLOG } from '../game/data/areas';
+import { CITY, CityAreaId, DOOR_Y } from '../game/data/city';
+import { CityRules } from '../game/chapters/city';
+import { saveLocal } from '../game/save';
 import { ITEMS } from '../game/data/items';
 import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
 import { CHARGE_TIME, hasTech } from '../game/data/techniques';
@@ -159,7 +162,8 @@ export class GameScene extends Phaser.Scene {
   private npcViews = new Map<number, CharView>();
   private gnome!: Phaser.GameObjects.Image;
   private bike!: Phaser.GameObjects.Sprite;
-  private car!: Phaser.GameObjects.Sprite;
+  private car?: Phaser.GameObjects.Sprite;
+  private carShadow!: Phaser.GameObjects.Image;
   private far: Phaser.GameObjects.TileSprite[] = [];
   private progG!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -172,6 +176,15 @@ export class GameScene extends Phaser.Scene {
   private startTime = 0;
   stage = 0;
   levelSeen = 0;
+  /** rozdział: 1 — prolog, 2 — miasto */
+  chapter: 1 | 2 = 1;
+  /** szerokość bieżącego świata / obszaru */
+  worldW = WORLD_W;
+  /** bieżący obszar miasta i numer wejścia */
+  areaId = '';
+  areaSeq = 0;
+  /** obiekty tła bieżącego obszaru (niszczone przy zmianie) */
+  private worldObjs: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super('Game');
@@ -199,28 +212,31 @@ export class GameScene extends Phaser.Scene {
     this.coinViews = new Map();
     this.stage = 0;
     this.levelSeen = -1;
+    this.chapter = data.chapter ?? 1;
+    this.worldW = WORLD_W;
+    this.areaId = '';
+    this.areaSeq = 0;
+    this.worldObjs = [];
+    this.far = [];
     this.startTime = this.time.now;
     controls.touchAtk = controls.touchAct = controls.touchJump = false;
     controls.touchX = controls.touchY = 0;
 
     const solo = data.mode === 'solo';
     if (data.mode !== 'guest') {
-      this.sim = new Sim({ pole: solo ? this.me === 'pole' : true, romanian: solo ? this.me === 'romanian' : true }, solo);
+      const present = { pole: solo ? this.me === 'pole' : true, romanian: solo ? this.me === 'romanian' : true };
+      this.sim =
+        this.chapter === 2
+          ? new Sim(present, solo, { progress: data.save?.progress, rules: (sim) => new CityRules(sim, data.save?.city) })
+          : new Sim(present, solo);
     }
 
     // świat
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
-    cam.setBounds(0, 0, WORLD_W, VIEW_H);
     cam.setRoundPixels(true);
-    this.far = PROLOG.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
-    PROLOG.bgs.forEach((b) => this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
-
-    // przedmioty
-    this.gnome = this.add.image(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 'gnome').setOrigin(0.5, 1).setDepth(ITEM_POS.gnome.y);
-    this.bike = this.add.sprite(ITEM_POS.bike.x, ITEM_POS.bike.y, 'bike', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.bike.y);
-    this.car = this.add.sprite(ITEM_POS.car.x, ITEM_POS.car.y, 'car', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.car.y);
-    this.add.image(ITEM_POS.car.x, ITEM_POS.car.y, 'shadow').setScale(5, 2).setDepth(2).setName('carShadow');
+    if (this.chapter === 1) this.buildProlog();
+    else cam.setBounds(0, 0, VIEW_W * 2, VIEW_H);
 
     // gracze
     for (const c of ['pole', 'romanian'] as CharId[]) {
@@ -420,7 +436,8 @@ export class GameScene extends Phaser.Scene {
       if (Math.abs(this.knock) < 0.5) this.knock = 0;
     }
     const stage = this.snap?.stage ?? 0;
-    this.px = Phaser.Math.Clamp(this.px, gateMinX(stage), WORLD_W - 8);
+    if (this.chapter === 1) this.px = Phaser.Math.Clamp(this.px, gateMinX(stage), WORLD_W - 8);
+    else this.px = Phaser.Math.Clamp(this.px, 6, this.worldW - 6);
     this.py = Phaser.Math.Clamp(this.py, WALK_TOP, WALK_BOTTOM);
 
     return {
@@ -432,6 +449,7 @@ export class GameScene extends Phaser.Scene {
       atk: this.atkSeq,
       ak: this.ak,
       act: actHeld && (anim === 'act' || anim === 'block' || anim === 'hold'),
+      ar: this.areaSeq,
     };
   }
 
@@ -502,6 +520,7 @@ export class GameScene extends Phaser.Scene {
   private onSnap(s: Snapshot) {
     const prevStage = this.snap?.stage ?? 0;
     this.snap = s;
+    if (s.city && s.city.seq !== this.areaSeq) this.enterArea(s.city.ar as CityAreaId, s.city.seq, s);
     for (const e of s.ev) this.handleEvent(e);
     if (s.stage !== prevStage) this.stage = s.stage;
   }
@@ -551,6 +570,18 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'stage':
         this.events.emit('stage', e.stage);
+        break;
+      case 'area':
+        this.sound.play('pickup', { volume: 0.25, rate: 0.8 });
+        break;
+      case 'save':
+        if (this.sim && this.sim.rules instanceof CityRules) {
+          saveLocal({ v: 1, progress: this.sim.progress(), city: { ...this.sim.rules.state } });
+          this.events.emit('toast', t('m.saved'));
+        }
+        break;
+      case 'cry':
+        this.floatText(t(`cry.${e.k}.${Math.floor(Math.random() * 3)}`), e.x, e.y - 52, '#ffb0b0');
         break;
       case 'shop':
         if (e.who === this.me) {
@@ -697,14 +728,15 @@ export class GameScene extends Phaser.Scene {
 
       this.renderItems(s, dt);
 
-      // przedmioty
-      this.gnome.setVisible(!s.o.gnome);
-      this.bike.setVisible(!s.o.bike).setFrame(s.o.lockHp > 0 ? 0 : 1);
-      this.car.x = s.o.carX;
-      this.car.setFrame(s.o.carUnlocked ? 1 : 0);
-      const cs = this.children.getByName('carShadow') as Phaser.GameObjects.Image;
-      cs.x = s.o.carX;
-      if (s.o.carGone && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+      // obiekty prologu
+      if (s.o && this.car) {
+        this.gnome.setVisible(!s.o.gnome);
+        this.bike.setVisible(!s.o.bike).setFrame(s.o.lockHp > 0 ? 0 : 1);
+        this.car.x = s.o.carX;
+        this.car.setFrame(s.o.carUnlocked ? 1 : 0);
+        this.carShadow.x = s.o.carX;
+        if (s.o.carGone && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+      }
 
       // paski postępu akcji
       this.progG.clear();
@@ -721,9 +753,9 @@ export class GameScene extends Phaser.Scene {
 
     // kamera: podąża za graczem (albo autem)
     let fx = this.px;
-    if (s?.p[this.me].inCar) fx = this.car.x;
+    if (s?.p[this.me].inCar && this.car) fx = this.car.x;
     const lead = this.face * 40;
-    const curMid = Phaser.Math.Clamp(cam.midPoint.x, VIEW_W / 2, WORLD_W - VIEW_W / 2);
+    const curMid = Phaser.Math.Clamp(cam.midPoint.x, VIEW_W / 2, this.worldW - VIEW_W / 2);
     const nx = curMid + (fx + lead - curMid) * Math.min(1, dt * 4);
     cam.centerOn(nx, VIEW_H / 2);
 
@@ -733,18 +765,72 @@ export class GameScene extends Phaser.Scene {
     this.far.forEach((f, i) => {
       f.setPosition(view.x, 0);
       f.tilePositionX = view.x * 0.25;
-      const lv = LEVELS[i];
-      const center = (lv.x0 + lv.x1) / 2;
-      const a = Phaser.Math.Clamp(1.5 - Math.abs(mid - center) / (LEVEL_W / 2), 0, 1);
-      f.setAlpha(i === 0 ? 1 : a);
+      if (this.chapter === 1) {
+        const lv = LEVELS[i];
+        const center = (lv.x0 + lv.x1) / 2;
+        const a = Phaser.Math.Clamp(1.5 - Math.abs(mid - center) / (LEVEL_W / 2), 0, 1);
+        f.setAlpha(i === 0 ? 1 : a);
+      }
     });
 
-    // baner poziomu
-    const lvl = LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
-    if (lvl >= 0 && lvl > this.levelSeen) {
-      this.levelSeen = lvl;
-      this.events.emit('level', lvl);
+    // baner poziomu (prolog)
+    if (this.chapter === 1) {
+      const lvl = LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
+      if (lvl >= 0 && lvl > this.levelSeen) {
+        this.levelSeen = lvl;
+        this.events.emit('level', lvl);
+      }
     }
+  }
+
+  // --- świat ------------------------------------------------------------------
+  private buildProlog() {
+    this.worldW = PROLOG.w;
+    this.cameras.main.setBounds(0, 0, PROLOG.w, VIEW_H);
+    this.far = PROLOG.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
+    PROLOG.bgs.forEach((b) => this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
+    this.gnome = this.add.image(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 'gnome').setOrigin(0.5, 1).setDepth(ITEM_POS.gnome.y);
+    this.bike = this.add.sprite(ITEM_POS.bike.x, ITEM_POS.bike.y, 'bike', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.bike.y);
+    this.car = this.add.sprite(ITEM_POS.car.x, ITEM_POS.car.y, 'car', 0).setOrigin(0.5, 1).setDepth(ITEM_POS.car.y);
+    this.carShadow = this.add.image(ITEM_POS.car.x, ITEM_POS.car.y, 'shadow').setScale(5, 2).setDepth(2);
+  }
+
+  /** Buduje obszar miasta (Rozdział II) i przenosi lokalnego gracza na pozycję z symulacji. */
+  private enterArea(id: CityAreaId, seq: number, s: Snapshot) {
+    const a = CITY[id];
+    this.areaId = id;
+    this.areaSeq = seq;
+    this.worldW = a.w;
+    this.worldObjs.forEach((o) => o.destroy());
+    this.far.forEach((f) => f.destroy());
+    this.worldObjs = [];
+    this.far = a.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
+    for (const b of a.bgs) this.worldObjs.push(this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
+    // widoki NPC / przedmiotów z poprzedniego obszaru
+    for (const v of this.npcViews.values()) v.destroy();
+    this.npcViews.clear();
+    for (const v of this.itemViews.values()) {
+      v.img.destroy();
+      v.shadow.destroy();
+    }
+    this.itemViews.clear();
+    for (const c of this.coinViews.values()) c.destroy();
+    this.coinViews.clear();
+    const me = s.p[this.me];
+    this.px = me.x;
+    this.py = me.y;
+    this.face = me.face;
+    this.z = this.vz = 0;
+    this.running = false;
+    this.knock = 0;
+    for (const c of ['pole', 'romanian'] as CharId[]) {
+      this.views[c].x = s.p[c].x;
+      this.views[c].y = s.p[c].y;
+    }
+    const cam = this.cameras.main;
+    cam.setBounds(0, 0, a.w, VIEW_H);
+    cam.centerOn(Phaser.Math.Clamp(this.px, VIEW_W / 2, a.w - VIEW_W / 2), VIEW_H / 2);
+    this.events.emit('area', id);
   }
 
   /** Przedmioty z ulicy i monety na ziemi. */
@@ -859,14 +945,26 @@ export class GameScene extends Phaser.Scene {
     const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
     const o = s.p[this.other];
     if (o.present && o.down && near(o.x, o.y, 28, 16)) return yes('hint.revive');
-    if (s.stage === 0 && !s.o.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return yes('hint.gnome');
-    if (s.stage === 1 && !s.o.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
-      if (s.o.lockHp > 0) return this.me === 'romanian' ? yes('hint.lockpick') : info('hint.smash');
-      return yes('hint.bike');
+    const ob = s.o;
+    if (ob) {
+      if (s.stage === 0 && !ob.gnome && near(ITEM_POS.gnome.x, ITEM_POS.gnome.y, 22, 18)) return yes('hint.gnome');
+      if (s.stage === 1 && !ob.bike && near(ITEM_POS.bike.x, ITEM_POS.bike.y, 26, 20)) {
+        if (ob.lockHp > 0) return this.me === 'romanian' ? yes('hint.lockpick') : info('hint.smash');
+        return yes('hint.bike');
+      }
+      if (s.stage === 2 && !ob.carGone && near(ob.carX, ITEM_POS.car.y, 56, 22)) {
+        if (!ob.carUnlocked) return this.me === 'romanian' || !o.present ? yes('hint.carlock') : info('hint.lookout');
+        return yes('hint.enter');
+      }
     }
-    if (s.stage === 2 && !s.o.carGone && near(s.o.carX, ITEM_POS.car.y, 56, 22)) {
-      if (!s.o.carUnlocked) return this.me === 'romanian' || !o.present ? yes('hint.carlock') : info('hint.lookout');
-      return yes('hint.enter');
+    if (s.city && this.py <= DOOR_Y + 14) {
+      for (const pr of CITY[s.city.ar as CityAreaId].props) {
+        if (pr.kind === 'door' && Math.abs(this.px - pr.x) < 16) return yes('hint.shop', { s: `shopname.${pr.shop}` });
+        if (pr.kind === 'pfand' && Math.abs(this.px - pr.x) < 18) {
+          const bottle = s.it.some(([, k, , , , h]) => k === 'bottle' && h === (this.me === 'pole' ? 1 : 2));
+          return bottle ? yes('hint.pfand') : info('h.pfand');
+        }
+      }
     }
     for (const [, , x, y, , anim, f, , z] of s.n) {
       if (anim === 'down' && !(f & NF_KO) && z === 0 && near(x, y, 30, 14)) return yes('hint.lift');
@@ -887,8 +985,14 @@ export class GameScene extends Phaser.Scene {
     return none;
   }
 
-  /** Indeks poziomu, na którym stoi lokalny gracz. */
+  /** Indeks poziomu prologu, na którym stoi lokalny gracz (-1 w mieście). */
   playerLevel(): number {
+    if (this.chapter !== 1) return -1;
     return LEVELS.findIndex((l) => this.px >= l.x0 && this.px < l.x1);
+  }
+
+  /** Pozycja lokalnego gracza (dla HUD). */
+  localPos() {
+    return { x: this.px, y: this.py };
   }
 }

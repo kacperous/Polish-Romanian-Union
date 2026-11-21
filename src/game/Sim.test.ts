@@ -25,7 +25,7 @@ describe('Sim — Rozdział I', () => {
   it('krasnal ukradziony bez świadków przesuwa etap', () => {
     const sim = emptySim();
     const { snap } = run(sim, 2, { romanian: input(ITEM_POS.gnome.x, ITEM_POS.gnome.y, { act: true }) });
-    expect(snap.o.gnome).toBe(1);
+    expect(snap.o?.gnome).toBe(1);
     expect(snap.stage).toBe(1);
   });
 

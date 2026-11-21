@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { t } from '../i18n';
 import { ANIM_FRAMES } from '../game/constants';
 import { ITEM_KINDS } from '../game/data/items';
+import { CITY_ORDER } from '../game/data/city';
 import { txt } from '../ui';
 
 export const CHAR_KEYS = ['pole', 'romanian', 'herr', 'frau', 'jogger', 'opa', 'gartner', 'boss', 'polizei'];
@@ -33,6 +34,7 @@ export class BootScene extends Phaser.Scene {
       this.load.image(`bg_far${i}`, `${a}bg_far${i}.png`);
     }
     for (const k of ITEM_KINDS) if (k !== 'gnome') this.load.image(`it_${k}`, `${a}it_${k}.png`);
+    for (const id of CITY_ORDER) this.load.image(`bg_${id}`, `${a}bg_${id}.png`);
     for (const s of SFX) this.load.audio(s, `${a}sfx/${s}.wav`);
   }
 

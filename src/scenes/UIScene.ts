@@ -2,6 +2,9 @@ import Phaser from 'phaser';
 import { t } from '../i18n';
 import type { GameScene } from './GameScene';
 import { CharId } from '../game/constants';
+import { ALL_STAMPS, CITY, CityAreaId, STAMP_COUNT } from '../game/data/city';
+import { EXIT_WAIT } from '../game/chapters/city';
+import type { CitySnap } from '../game/types';
 import { controls, isTouchDevice } from '../game/Controls';
 import { FONT, txt } from '../ui';
 
@@ -20,6 +23,10 @@ export class UIScene extends Phaser.Scene {
   private hintT!: Phaser.GameObjects.Text;
   private arrow!: Phaser.GameObjects.Container;
   private lastMoney = 0;
+  private stampsUI: Phaser.GameObjects.Text[] = [];
+  private areaT?: Phaser.GameObjects.Text;
+  private exitL?: Phaser.GameObjects.Text;
+  private exitR?: Phaser.GameObjects.Text;
 
   // joystick
   private joyBase!: Phaser.GameObjects.Arc;
@@ -37,6 +44,8 @@ export class UIScene extends Phaser.Scene {
     this.game_ = data.game;
     this.items = [];
     this.checks = [];
+    this.stampsUI = [];
+    this.areaT = this.exitL = this.exitR = undefined;
     this.joyId = this.actId = -1;
     this.lastMoney = 0;
 
@@ -57,19 +66,32 @@ export class UIScene extends Phaser.Scene {
 
     // pieniądze + lista łupów
     this.money = txt(this, 560, 26, '0 €', 30, '#ffe040', 6).setOrigin(0, 0.5);
-    const loot: [string, number][] = [
-      ['gnome', 2.2],
-      ['bike', 1.2],
-      ['car', 0.5],
-    ];
-    loot.forEach(([k, sc], i) => {
-      const x = 590 + i * 58;
-      this.add.rectangle(x, 62, 52, 34, 0x181020, 0.7).setStrokeStyle(2, 0x505060);
-      const img = this.add.image(x, 62, k, 0).setScale(sc).setAlpha(0.35);
-      if (k === 'car') img.setCrop(0, 0, 104, 46);
-      this.items.push(img);
-      this.checks.push(txt(this, x + 18, 72, '', 20, '#7dff7d', 4));
-    });
+    if (this.game_.chapter === 1) {
+      const loot: [string, number][] = [
+        ['gnome', 2.2],
+        ['bike', 1.2],
+        ['car', 0.5],
+      ];
+      loot.forEach(([k, sc], i) => {
+        const x = 590 + i * 58;
+        this.add.rectangle(x, 62, 52, 34, 0x181020, 0.7).setStrokeStyle(2, 0x505060);
+        const img = this.add.image(x, 62, k, 0).setScale(sc).setAlpha(0.35);
+        if (k === 'car') img.setCrop(0, 0, 104, 46);
+        this.items.push(img);
+        this.checks.push(txt(this, x + 18, 72, '', 20, '#7dff7d', 4));
+      });
+    } else {
+      // pieczątki szefów band (Freigabeschein)
+      this.add.text(578, 68, t('hud.stamps'), { fontFamily: FONT, fontSize: '14px', color: '#c0c0d0', stroke: '#181020', strokeThickness: 3 }).setOrigin(1, 0.5);
+      for (let i = 0; i < STAMP_COUNT; i++) {
+        const x = 598 + i * 30;
+        this.add.circle(x, 68, 12, 0x181020, 0.75).setStrokeStyle(2, 0x505060);
+        this.stampsUI.push(txt(this, x, 68, '', 18, '#ff5050', 4));
+      }
+      this.areaT = txt(this, 480, 98, '', 16, '#ffffff', 4);
+      this.exitL = txt(this, 14, 300, '', 18, '#ffe040', 5).setOrigin(0, 0.5).setAlign('left');
+      this.exitR = txt(this, 946, 300, '', 18, '#ffe040', 5).setOrigin(1, 0.5).setAlign('right');
+    }
 
     // alarm
     txt(this, 860, 18, 'POLIZEI', 18, '#80c0ff', 4);
@@ -87,10 +109,12 @@ export class UIScene extends Phaser.Scene {
 
     this.game_.events.on('toast', this.toast, this);
     this.game_.events.on('level', this.levelBanner, this);
+    this.game_.events.on('area', this.areaBanner, this);
     this.game_.events.on('stage', () => this.sound.play('pickup', { volume: 0.3 }), this);
     this.events.once('shutdown', () => {
       this.game_.events.off('toast', this.toast, this);
       this.game_.events.off('level', this.levelBanner, this);
+      this.game_.events.off('area', this.areaBanner, this);
       this.game_.events.off('stage');
       controls.touchX = controls.touchY = 0;
       controls.touchAct = controls.touchAtk = controls.touchJump = controls.touchAtkHeld = false;
@@ -119,6 +143,17 @@ export class UIScene extends Phaser.Scene {
     all.forEach((o) => o.setAlpha(0));
     this.tweens.add({ targets: all, alpha: 1, duration: 300 });
     this.time.delayedCall(2600, () => this.tweens.add({ targets: all, alpha: 0, duration: 500, onComplete: () => all.forEach((o) => o.destroy()) }));
+  }
+
+  /** Baner przy wejściu do dzielnicy miasta. */
+  private areaBanner(id: string) {
+    const band = this.add.rectangle(480, 250, 960, 96, 0x181020, 0.75);
+    const t1 = txt(this, 480, 234, t(`area.${id}`).toUpperCase(), 36, '#ffffff', 7);
+    const t2 = txt(this, 480, 276, t(`area.${id}.sub`), 20, '#ffe040', 5);
+    const all = [band, t1, t2];
+    all.forEach((o) => o.setAlpha(0));
+    this.tweens.add({ targets: all, alpha: 1, duration: 250 });
+    this.time.delayedCall(2200, () => this.tweens.add({ targets: all, alpha: 0, duration: 450, onComplete: () => all.forEach((o) => o.destroy()) }));
   }
 
   // ---------------------------------------------------------------------------
@@ -242,11 +277,14 @@ export class UIScene extends Phaser.Scene {
       this.money.setText(`${s.money} €`);
       this.tweens.add({ targets: this.money, scale: { from: 1.3, to: 1 }, duration: 250 });
     }
-    const done = [s.o.gnome, s.o.bike, s.o.carGone];
-    done.forEach((d, i) => {
-      this.items[i].setAlpha(d ? 1 : 0.35);
-      this.checks[i].setText(d ? '✔' : '');
-    });
+    if (s.o) {
+      const done = [s.o.gnome, s.o.bike, s.o.carGone];
+      done.forEach((d, i) => {
+        this.items[i].setAlpha(d ? 1 : 0.35);
+        this.checks[i].setText(d ? '✔' : '');
+      });
+    }
+    if (s.city) this.updateCity(s.city);
 
     // alarm
     const a = s.alarm / 100;
@@ -260,6 +298,29 @@ export class UIScene extends Phaser.Scene {
     this.hintT.setText(this.game_.actionHint());
 
     const lvl = this.game_.playerLevel();
-    this.arrow.setVisible(lvl >= 0 && s.stage > lvl && !s.o.carGone);
+    this.arrow.setVisible(!!s.o && lvl >= 0 && s.stage > lvl && !s.o.carGone);
+  }
+
+  private updateCity(c: CitySnap) {
+    this.stampsUI.forEach((st, i) => st.setText(c.stamps & (1 << i) ? '✪' : ''));
+    const area = CITY[c.ar as CityAreaId];
+    this.areaT?.setText(`${t(`area.${c.ar}`)}${area.safe ? `  •  ${t('hud.safe')}` : ''}`);
+    // strzałki wyjść, gdy gracz jest blisko krawędzi
+    const { x } = this.game_.localPos();
+    const label = (side: 'L' | 'R') => {
+      const ex = area.exits.find((e) => e.side === side);
+      if (!ex) return '';
+      const locked = ex.needStamps && c.stamps !== ALL_STAMPS;
+      const name = t(`area.${ex.to}`);
+      return locked ? `🔒 ${name}` : side === 'L' ? `← ${name}` : `${name} →`;
+    };
+    const near = 110;
+    this.exitL?.setText(x < near ? label('L') : '');
+    this.exitR?.setText(x > area.w - near ? label('R') : '');
+    if (c.wait > 0) {
+      const w = `${t('hud.waiting')} ${Math.ceil((1 - c.wait) * EXIT_WAIT)}`;
+      if (x < near) this.exitL?.setText(`${label('L')}\n${w}`);
+      else if (x > area.w - near) this.exitR?.setText(`${label('R')}\n${w}`);
+    }
   }
 }

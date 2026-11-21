@@ -1,5 +1,6 @@
 import type { AnimName, CharId, NpcKind } from './constants';
 import type { ItemKind } from './data/items';
+import type { SaveData } from './save';
 
 /** Rodzaj ciosu: n — zwykły, j — w skoku, r — w biegu, c — ładowany. */
 export type AtkKind = 'n' | 'j' | 'r' | 'c';
@@ -18,9 +19,11 @@ export interface PlayerInput {
   ak: AtkKind;
   /** czy trzymany jest przycisk AKCJA */
   act: boolean;
+  /** numer wejścia do obszaru, który zna klient (Rozdział II) */
+  ar?: number;
 }
 
-export type ActKind = '' | 'pickpocket' | 'loot' | 'gnome' | 'lockpick' | 'bike' | 'carlock' | 'revive' | 'enter' | 'lift' | 'drop' | 'pickup';
+export type ActKind = '' | 'pickpocket' | 'loot' | 'gnome' | 'lockpick' | 'bike' | 'carlock' | 'revive' | 'enter' | 'lift' | 'drop' | 'pickup' | 'shop' | 'pfand';
 
 /** Co gracz trzyma: 0 — nic, 1 — wroga, 2 — przedmiot do rzucania, 3 — broń. */
 export type HoldKind = 0 | 1 | 2 | 3;
@@ -86,8 +89,23 @@ export type GameEvent =
   | { e: 'msg'; s: string; who?: CharId; a?: Record<string, string> }
   | { e: 'stage'; stage: number }
   | { e: 'shop'; who: CharId; shop: string }
+  | { e: 'area'; id: string }
+  | { e: 'cry'; x: number; y: number; k: string }
+  | { e: 'save' }
   | { e: 'eat'; who: CharId; good: string; ups: string[] }
   | { e: 'end'; win: boolean; reason: string };
+
+/** Stan miasta (Rozdział II). */
+export interface CitySnap {
+  /** id obszaru */
+  ar: string;
+  /** numer wejścia do obszaru */
+  seq: number;
+  /** pieczątki szefów band (bity) */
+  stamps: number;
+  /** postęp czekania przy wyjściu 0..1 (co-op) */
+  wait: number;
+}
 
 export interface Snapshot {
   t: number;
@@ -95,7 +113,10 @@ export interface Snapshot {
   n: NpcSnap[];
   it: ItemSnap[];
   co: CoinSnap[];
-  o: ObjSnap;
+  /** obiekty prologu */
+  o?: ObjSnap;
+  /** stan miasta (Rozdział II) */
+  city?: CitySnap;
   money: number;
   alarm: number;
   stage: number;
@@ -117,4 +138,8 @@ export interface GameStartData {
   mode: 'solo' | 'host' | 'guest';
   me: CharId;
   code?: string;
+  /** 1 — prolog, 2 — Rozdział II (miasto) */
+  chapter?: 1 | 2;
+  /** wczytany postęp Rozdziału II (u hosta) */
+  save?: SaveData;
 }
