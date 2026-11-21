@@ -14,7 +14,27 @@ export const PLAYER_SPEED = 78;
 export const PLAYER_MAX_HP = 120;
 
 export type CharId = 'pole' | 'romanian';
-export type NpcKind = 'herr' | 'frau' | 'jogger' | 'opa' | 'gartner' | 'boss' | 'polizei';
+export type NpcKind =
+  | 'herr'
+  | 'frau'
+  | 'jogger'
+  | 'opa'
+  | 'gartner'
+  | 'boss'
+  | 'polizei'
+  // Rozdział II: bandy, sklepikarze, bossowie
+  | 'kontroler'
+  | 'pfandler'
+  | 'ultra'
+  | 'beamter'
+  | 'halina'
+  | 'costel'
+  | 'b_fahr'
+  | 'b_gunther'
+  | 'b_paul'
+  | 'b_thorsten'
+  | 'b_paragraf'
+  | 'b_klaus';
 
 /** Poziomy (od prawej do lewej). index 0 = pierwszy poziom (prawa strona świata). */
 export const LEVELS = [

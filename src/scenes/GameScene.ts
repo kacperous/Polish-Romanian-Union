@@ -22,7 +22,9 @@ import {
 import { Sim } from '../game/Sim';
 import { PROLOG } from '../game/data/areas';
 import { CITY, CityAreaId, DOOR_Y } from '../game/data/city';
-import { CityRules } from '../game/chapters/city';
+import { CAR_Y, CityRules } from '../game/chapters/city';
+import { GNOME_SPOTS, NPC_PARAMS } from '../game/data/story';
+import type { DialogScene } from './DialogScene';
 import { saveLocal } from '../game/save';
 import { ITEMS } from '../game/data/items';
 import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
@@ -185,6 +187,7 @@ export class GameScene extends Phaser.Scene {
   areaSeq = 0;
   /** obiekty tła bieżącego obszaru (niszczone przy zmianie) */
   private worldObjs: Phaser.GameObjects.GameObject[] = [];
+  private hiddenGnome?: Phaser.GameObjects.Image;
 
   constructor() {
     super('Game');
@@ -266,6 +269,7 @@ export class GameScene extends Phaser.Scene {
           else if (d.k === 'buy') this.sim?.buy(this.other, String(d.g), d.m === 'take' ? 'take' : 'eat');
           else if (d.k === 'use') this.sim?.useItem(this.other, Number(d.slot));
           else if (d.k === 'leave_shop') this.sim?.leaveShop(this.other);
+          else if (d.k === 'skip') this.sim?.skipCutscene();
         }),
         net.on('peer_left', () => this.abort(t('err.mate_left'))),
         net.on('disconnected', () => this.abort(t('err.lost'))),
@@ -285,6 +289,7 @@ export class GameScene extends Phaser.Scene {
       this.scene.stop('UI');
       this.scene.stop('Shop');
       this.scene.stop('Pause');
+      this.scene.stop('Dialog');
     });
 
     playMusic(this, 'music_game', 0.28);
@@ -342,6 +347,13 @@ export class GameScene extends Phaser.Scene {
     if (!mx || (this.running && Math.sign(mx) !== this.face)) this.running = false;
 
     const ps = this.snap?.p[this.me];
+    // scenka dialogowa: BIJ / SKOK pomija, postać stoi
+    if (this.scene.isActive('Dialog')) {
+      if (atkPressed || jumpPressed) this.requestSkip();
+      mx = my = 0;
+      atkPressed = false;
+      this.running = false;
+    }
     // w sklepie / w menu pauzy postać stoi
     if (ps?.shop || this.paused) {
       mx = my = 0;
@@ -457,6 +469,11 @@ export class GameScene extends Phaser.Scene {
   requestBuy(good: string, mode: 'eat' | 'take') {
     if (this.sim) this.sim.buy(this.me, good, mode);
     else net.send({ k: 'buy', g: good, m: mode });
+  }
+
+  requestSkip() {
+    if (this.sim) this.sim.skipCutscene();
+    else net.send({ k: 'skip' });
   }
 
   requestUse(slot: number) {
@@ -580,6 +597,17 @@ export class GameScene extends Phaser.Scene {
           this.events.emit('toast', t('m.saved'));
         }
         break;
+      case 'dialog':
+        this.togglePause(false);
+        if (this.scene.isActive('Dialog')) (this.scene.get('Dialog') as DialogScene).addLines(e.lines);
+        else this.scene.launch('Dialog', { game: this, lines: e.lines });
+        break;
+      case 'dialog_end':
+        this.scene.stop('Dialog');
+        break;
+      case 'shake':
+        this.cameras.main.shake(300, 0.012);
+        break;
       case 'cry':
         this.floatText(t(`cry.${e.k}.${Math.floor(Math.random() * 3)}`), e.x, e.y - 52, '#ffb0b0');
         break;
@@ -696,6 +724,9 @@ export class GameScene extends Phaser.Scene {
         let v = this.npcViews.get(id);
         if (!v) {
           v = new CharView(this, `char_${kind}`, x, y);
+          const sc = NPC_PARAMS[kind].scale ?? 1;
+          v.sprite.setScale(sc);
+          v.shadow.setScale(sc);
           this.npcViews.set(id, v);
         }
         if (Math.abs(x - v.x) > 80) v.x = x;
@@ -728,6 +759,7 @@ export class GameScene extends Phaser.Scene {
 
       this.renderItems(s, dt);
 
+      if (s.city) this.renderCity(s);
       // obiekty prologu
       if (s.o && this.car) {
         this.gnome.setVisible(!s.o.gnome);
@@ -804,6 +836,8 @@ export class GameScene extends Phaser.Scene {
     this.worldObjs.forEach((o) => o.destroy());
     this.far.forEach((f) => f.destroy());
     this.worldObjs = [];
+    this.hiddenGnome = undefined;
+    this.car = undefined;
     this.far = a.far.map((k, i) => this.add.tileSprite(0, 0, VIEW_W, VIEW_H, k).setOrigin(0).setDepth(-99 + i));
     for (const b of a.bgs) this.worldObjs.push(this.add.image(b.x, 0, b.key).setOrigin(0).setDepth(-50));
     // widoki NPC / przedmiotów z poprzedniego obszaru
@@ -831,6 +865,31 @@ export class GameScene extends Phaser.Scene {
     cam.setBounds(0, 0, a.w, VIEW_H);
     cam.centerOn(Phaser.Math.Clamp(this.px, VIEW_W / 2, a.w - VIEW_W / 2), VIEW_H / 2);
     this.events.emit('area', id);
+  }
+
+  /** Obiekty miasta: ukryty krasnal, auto w finale. */
+  private renderCity(s: Snapshot) {
+    const c = s.city!;
+    const spot = GNOME_SPOTS[c.ar as CityAreaId];
+    if (spot && !this.hiddenGnome) {
+      this.hiddenGnome = this.add.image(spot.x, DOOR_Y - 2, 'gnome').setOrigin(0.5, 1).setDepth(DOOR_Y - 2);
+      this.worldObjs.push(this.hiddenGnome);
+    }
+    if (spot && this.hiddenGnome) {
+      const found = !!(c.gnomes & (1 << spot.bit));
+      this.hiddenGnome.setVisible(!found);
+      if (!found && Math.random() < 0.02) this.floatText('✦', spot.x + Phaser.Math.Between(-6, 6), DOOR_Y - 26, '#fff4a0');
+    }
+    if (c.car) {
+      if (!this.car) {
+        this.car = this.add.sprite(c.car[0], CAR_Y, 'car', 1).setOrigin(0.5, 1).setDepth(CAR_Y);
+        this.carShadow = this.add.image(c.car[0], CAR_Y, 'shadow').setScale(5, 2).setDepth(2);
+        this.worldObjs.push(this.car, this.carShadow);
+      }
+      this.car.x = c.car[0];
+      this.carShadow.x = c.car[0];
+      if (c.car[1] && Math.random() < 0.5) this.spawnDust(this.car.x - 52, this.car.y - 2);
+    }
   }
 
   /** Przedmioty z ulicy i monety na ziemi. */
@@ -957,6 +1016,9 @@ export class GameScene extends Phaser.Scene {
         return yes('hint.enter');
       }
     }
+    if (s.city?.car && !s.city.car[1] && near(s.city.car[0], CAR_Y, 56, 22)) return yes('hint.enter');
+    const gs = s.city ? GNOME_SPOTS[s.city.ar as CityAreaId] : undefined;
+    if (s.city && gs && !(s.city.gnomes & (1 << gs.bit)) && this.py <= DOOR_Y + 14 && Math.abs(this.px - gs.x) < 16) return yes('hint.gnome2');
     if (s.city && this.py <= DOOR_Y + 14) {
       for (const pr of CITY[s.city.ar as CityAreaId].props) {
         if (pr.kind === 'door' && Math.abs(this.px - pr.x) < 16) return yes('hint.shop', { s: `shopname.${pr.shop}` });
@@ -972,8 +1034,8 @@ export class GameScene extends Phaser.Scene {
     for (const [, kind, x, y, z, holder] of s.it) {
       if (holder === 0 && z === 0 && near(x, y, 18, 12)) return yes('hint.pickup', { i: `item.${kind}` });
     }
-    for (const [, , x, y, face, , f] of s.n) {
-      if (!near(x, y, 36, 14)) continue;
+    for (const [, kind, x, y, face, , f] of s.n) {
+      if (kind === 'halina' || kind === 'costel' || !near(x, y, 36, 14)) continue;
       if (f & NF_KO) {
         if (f & NF_LOOTED) continue;
         return yes('hint.loot');

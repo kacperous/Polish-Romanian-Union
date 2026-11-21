@@ -2,7 +2,20 @@
 import { WALK_BOTTOM, WALK_TOP } from '../constants';
 import { ALL_STAMPS, CITY, CityArea, CityAreaId, DOOR_Y } from '../data/city';
 import type { PlayerSim, Sim } from '../Sim';
-import { maxHp } from '../stats';
+import { clampStat, maxHp } from '../stats';
+import {
+  BOSSES,
+  BossDef,
+  FLAG,
+  GATE_DIALOG,
+  GNOME_REWARD,
+  GNOME_SPOTS,
+  GNOMES_DIALOG,
+  INTRO_DIALOG,
+  PFAND_DIALOG,
+  PFAND_GOAL,
+  PFAND_REWARD,
+} from '../data/story';
 import type { ActKind } from '../types';
 import type { ActChoice, ChapterRules } from './rules';
 
@@ -16,6 +29,15 @@ export interface CityState {
   flags: number;
   /** oddane butelki */
   pfand: number;
+}
+
+/** Wysokość (y) auta w holowni. */
+export const CAR_Y = 236;
+
+function countBits(v: number) {
+  let n = 0;
+  for (; v; v &= v - 1) n++;
+  return n;
 }
 
 export function emptyCityState(): CityState {
@@ -33,6 +55,10 @@ export class CityRules implements ChapterRules {
   state: CityState;
   private exitT = 0;
   private respawnT = 0;
+  /** bossowie pokonani w tej wizycie (żeby nie liczyć dwa razy) */
+  private beaten = new Set<string>();
+  /** auto w holowni (finał) */
+  car: { x: number; unlocked: boolean; gone: boolean; t: number } | null = null;
 
   constructor(
     private sim: Sim,
@@ -44,6 +70,15 @@ export class CityRules implements ChapterRules {
 
   init() {
     this.load(this.start, null);
+    if (!(this.state.flags & FLAG.INTRO)) {
+      this.state.flags |= FLAG.INTRO;
+      this.sim.dialog(INTRO_DIALOG);
+    }
+  }
+
+  /** Bossowie tego obszaru, którzy jeszcze stoją. */
+  private bossesHere(): BossDef[] {
+    return BOSSES.filter((b) => b.area === this.area.id && (b.stamp < 0 ? !(this.state.flags & FLAG.FINISHED) : !(this.state.stamps & (1 << b.stamp))));
   }
 
   /** Wczytuje obszar; `from` — krawędź, którą gracze wyszli z poprzedniego. */
@@ -67,6 +102,19 @@ export class CityRules implements ChapterRules {
       if (sp.role === 'thug') n.coins = Math.max(1, a.coins + sim.randi(-4, 4));
     }
     for (const it of a.items ?? []) sim.addItem(it.kind, it.x, it.y);
+    this.beaten.clear();
+    this.car = null;
+    for (const b of this.bossesHere()) {
+      for (const sp of b.spawns) {
+        const n = sim.addNpc(sp.kind, 'boss', sp.x, sp.y, 30, a.w - 30, sp.x > a.w / 2 ? -1 : 1);
+        n.boss = b.id;
+        n.coins = 60;
+      }
+    }
+    if (id === 'baza') {
+      sim.addNpc('halina', 'keeper', 150, 170, 150, 150, 1);
+      sim.addNpc('costel', 'keeper', 510, 170, 510, 510, 1);
+    }
     // wejście: wyszli lewą krawędzią → pojawiają się z prawej strony nowego obszaru
     const x = from === 'L' ? a.w - 40 : from === 'R' ? 40 : 380;
     const face: 1 | -1 = from === 'L' ? -1 : 1;
@@ -83,7 +131,59 @@ export class CityRules implements ChapterRules {
       i++;
     }
     sim.ev({ e: 'area', id });
-    if (a.safe) sim.ev({ e: 'save' });
+    if (a.safe) {
+      sim.ev({ e: 'save' });
+      this.baseEvents();
+    }
+  }
+
+  /** Wydarzenia przy powrocie do bazy: otwarta brama, nagroda za butelki. */
+  private baseEvents() {
+    const st = this.state;
+    if (st.stamps === ALL_STAMPS && !(st.flags & FLAG.GATE)) {
+      st.flags |= FLAG.GATE;
+      this.sim.dialog(GATE_DIALOG);
+    }
+    if (st.pfand >= PFAND_GOAL && !(st.flags & FLAG.PFAND_DONE)) {
+      st.flags |= FLAG.PFAND_DONE;
+      this.sim.money += PFAND_REWARD;
+      this.sim.dialog(PFAND_DIALOG);
+    }
+  }
+
+  /** Scenki powitalne bossów i sprawdzanie, czy padli. */
+  private updateBosses() {
+    const sim = this.sim;
+    for (const b of this.bossesHere()) {
+      const npcs = sim.npcs.filter((n) => n.boss === b.id);
+      if (!npcs.length || this.beaten.has(b.id)) continue;
+      if (!npcs[0].introDone) {
+        const near = Object.values(sim.players).some((p) => p.present && !p.down && npcs.some((n) => Math.abs(n.x - p.in.x) < 210));
+        if (!near) continue;
+        npcs.forEach((n) => (n.introDone = true));
+        sim.dialog(b.intro, () => {
+          const tgt = Object.values(sim.players).find((p) => p.present && !p.down);
+          npcs.forEach((n) => sim.enrage(n, tgt));
+        });
+        sim.ev({ e: 'sfx', k: 'rage' });
+        continue;
+      }
+      if (npcs.every((n) => n.state === 'ko')) {
+        this.beaten.add(b.id);
+        if (b.stamp >= 0) {
+          this.state.stamps |= 1 << b.stamp;
+          sim.sfx('win');
+          sim.ev({ e: 'msg', s: 'm.stamp', a: { b: `boss.${b.id}` } });
+          sim.dialog(b.outro);
+          sim.ev({ e: 'save' });
+        } else {
+          // finał: auto stoi za Klausem
+          sim.dialog(b.outro);
+          this.car = { x: 560, unlocked: true, gone: false, t: 0 };
+          sim.ev({ e: 'msg', s: 'm.car_found' });
+        }
+      }
+    }
   }
 
   update(dt: number) {
@@ -91,6 +191,20 @@ export class CityRules implements ChapterRules {
     if (this.respawnT > 0) {
       this.respawnT -= dt;
       if (this.respawnT <= 0) this.respawn();
+      return;
+    }
+    this.updateBosses();
+    if (this.car?.gone) {
+      const c = this.car;
+      c.t += dt;
+      c.x += Math.min(260, 40 + c.t * 140) * dt;
+      if (c.t > 3.2 && !sim.ended) {
+        sim.ended = true;
+        this.state.flags |= FLAG.FINISHED;
+        sim.ev({ e: 'save' });
+        sim.sfx('win');
+        sim.ev({ e: 'end', win: true, reason: 'end.win2_reason' });
+      }
       return;
     }
     // wyjścia na krawędziach
@@ -125,7 +239,11 @@ export class CityRules implements ChapterRules {
 
   chooseAct(p: PlayerSim): ActChoice | null {
     const sim = this.sim;
+    const car = this.car;
+    if (car && !car.gone && !p.inCar && sim.near(p, car.x, CAR_Y, 56, 22)) return { kind: 'enter', target: 204 };
     if (p.in.y > DOOR_Y + 14) return null;
+    const g = GNOME_SPOTS[this.area.id];
+    if (g && !(this.state.gnomes & (1 << g.bit)) && Math.abs(p.in.x - g.x) < 16) return { kind: 'gnome', target: 300 };
     for (let i = 0; i < this.area.props.length; i++) {
       const pr = this.area.props[i];
       if (pr.kind === 'door' && Math.abs(p.in.x - pr.x) < 16) return { kind: 'shop', target: i };
@@ -145,6 +263,36 @@ export class CityRules implements ChapterRules {
 
   completeAct(p: PlayerSim, kind: ActKind, target: number): boolean {
     const sim = this.sim;
+    if (kind === 'enter' && this.car) {
+      p.inCar = true;
+      sim.releaseHeld(p);
+      sim.playerDrop(p);
+      sim.sfx('click');
+      if (Object.values(sim.players).every((q) => !q.present || q.inCar)) {
+        this.car.gone = true;
+        sim.sfx('engine');
+        sim.ev({ e: 'msg', s: 'm.escape2' });
+      } else sim.ev({ e: 'msg', s: 'm.wait_car', who: p.id });
+      return true;
+    }
+    if (kind === 'gnome') {
+      const g = GNOME_SPOTS[this.area.id];
+      if (!g || this.state.gnomes & (1 << g.bit)) return true;
+      this.state.gnomes |= 1 << g.bit;
+      for (const q of Object.values(sim.players)) {
+        q.stats.wytrz = clampStat(q.stats.wytrz + 1);
+        q.stats.leb = clampStat(q.stats.leb + 1);
+      }
+      sim.sfx('pickup');
+      sim.txt('f.gnome2', g.x, DOOR_Y - 30, '#ffe040');
+      sim.ev({ e: 'msg', s: 'm.gnome_found', a: { n: String(countBits(this.state.gnomes)) } });
+      if (this.state.gnomes === 31 && !(this.state.flags & FLAG.GNOMES_DONE)) {
+        this.state.flags |= FLAG.GNOMES_DONE;
+        sim.money += GNOME_REWARD;
+        sim.dialog(GNOMES_DIALOG);
+      }
+      return true;
+    }
     const pr = this.area.props[target];
     if (!pr) return false;
     if (kind === 'shop' && pr.shop) {
@@ -193,7 +341,19 @@ export class CityRules implements ChapterRules {
   }
 
   policeAllowed() {
-    return !this.area.safe;
+    return !this.area.safe && this.area.id !== 'holownia';
+  }
+
+  /** Pasek życia bossa, z którym trwa walka. */
+  private bossBar(): [string, number] | null {
+    for (const b of this.bossesHere()) {
+      const npcs = this.sim.npcs.filter((n) => n.boss === b.id);
+      if (!npcs.length || !npcs[0].introDone || this.beaten.has(b.id)) continue;
+      const hp = npcs.reduce((a, n) => a + Math.max(0, n.hp), 0);
+      const max = npcs.reduce((a, n) => a + n.maxHp, 0);
+      return [`boss.${b.id}`, Math.round((hp / max) * 100) / 100];
+    }
+    return null;
   }
 
   /** Czy obszar ma wyjście w tę stronę (do podpowiedzi). */
@@ -203,7 +363,15 @@ export class CityRules implements ChapterRules {
 
   snap() {
     return {
-      city: { ar: this.area.id, seq: this.seq, stamps: this.state.stamps, wait: Math.min(1, this.exitT / EXIT_WAIT) },
+      city: {
+        ar: this.area.id,
+        seq: this.seq,
+        stamps: this.state.stamps,
+        gnomes: this.state.gnomes,
+        wait: Math.min(1, this.exitT / EXIT_WAIT),
+        boss: this.bossBar(),
+        car: this.car ? ([Math.round(this.car.x), this.car.gone ? 1 : 0] as [number, 0 | 1]) : null,
+      },
     };
   }
 }

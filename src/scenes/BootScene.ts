@@ -5,7 +5,11 @@ import { ITEM_KINDS } from '../game/data/items';
 import { CITY_ORDER } from '../game/data/city';
 import { txt } from '../ui';
 
-export const CHAR_KEYS = ['pole', 'romanian', 'herr', 'frau', 'jogger', 'opa', 'gartner', 'boss', 'polizei'];
+export const CHAR_KEYS = [
+  'pole', 'romanian', 'herr', 'frau', 'jogger', 'opa', 'gartner', 'boss', 'polizei',
+  'kontroler', 'pfandler', 'ultra', 'beamter', 'halina', 'costel',
+  'b_fahr', 'b_gunther', 'b_paul', 'b_thorsten', 'b_paragraf', 'b_klaus',
+];
 const SFX = ['block', 'hit', 'swing', 'kick', 'coin', 'steal', 'rage', 'alert', 'siren', 'hurt', 'pickup', 'click', 'engine', 'pick', 'ko', 'win', 'lose', 'music_game', 'music_menu'];
 
 export class BootScene extends Phaser.Scene {

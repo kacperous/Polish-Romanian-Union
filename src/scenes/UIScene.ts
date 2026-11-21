@@ -27,6 +27,8 @@ export class UIScene extends Phaser.Scene {
   private areaT?: Phaser.GameObjects.Text;
   private exitL?: Phaser.GameObjects.Text;
   private exitR?: Phaser.GameObjects.Text;
+  private bossG!: Phaser.GameObjects.Graphics;
+  private bossT!: Phaser.GameObjects.Text;
 
   // joystick
   private joyBase!: Phaser.GameObjects.Arc;
@@ -89,6 +91,8 @@ export class UIScene extends Phaser.Scene {
         this.stampsUI.push(txt(this, x, 68, '', 18, '#ff5050', 4));
       }
       this.areaT = txt(this, 480, 98, '', 16, '#ffffff', 4);
+      this.bossG = this.add.graphics();
+      this.bossT = txt(this, 480, 408, '', 18, '#ffffff', 5).setVisible(false);
       this.exitL = txt(this, 14, 300, '', 18, '#ffe040', 5).setOrigin(0, 0.5).setAlign('left');
       this.exitR = txt(this, 946, 300, '', 18, '#ffe040', 5).setOrigin(1, 0.5).setAlign('right');
     }
@@ -302,6 +306,15 @@ export class UIScene extends Phaser.Scene {
   }
 
   private updateCity(c: CitySnap) {
+    // pasek życia bossa
+    const g = this.bossG;
+    g.clear();
+    if (c.boss) {
+      const [name, frac] = c.boss;
+      g.fillStyle(0x181020, 0.85).fillRect(270, 420, 420, 22);
+      g.fillStyle(0xd8263a, 1).fillRect(273, 423, Math.round(414 * Math.max(0, frac)), 16);
+      this.bossT.setText(t(name).toUpperCase()).setVisible(true);
+    } else this.bossT.setVisible(false);
     this.stampsUI.forEach((st, i) => st.setText(c.stamps & (1 << i) ? '✪' : ''));
     const area = CITY[c.ar as CityAreaId];
     this.areaT?.setText(`${t(`area.${c.ar}`)}${area.safe ? `  •  ${t('hud.safe')}` : ''}`);

@@ -42,12 +42,11 @@ describe('przedmioty', () => {
     n.hp = 1;
     sim.update(1 / 60, { pole: input(2680, 200, { face: 1, atk: 1 }) });
     expect(n.state).toBe('ko');
-    expect(sim.coins.length).toBeGreaterThan(0);
-    const total = sim.coins.reduce((a, c) => a + c.v, 0);
+    // część monet mogła od razu wpaść do kieszeni (leżały pod nogami)
+    const total = sim.money + sim.coins.reduce((a, c) => a + c.v, 0);
     expect(total).toBe(25);
-    const m0 = sim.money;
     for (const c of [...sim.coins]) sim.update(1 / 60, { pole: input(c.x, c.y, { atk: 1 }) });
-    expect(sim.money - m0).toBe(25);
+    expect(sim.money).toBe(25);
     expect(sim.coins.length).toBe(0);
   });
 

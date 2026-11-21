@@ -3,11 +3,14 @@ import { Sim } from './Sim';
 import { CityRules } from './chapters/city';
 import { CITY } from './data/city';
 import { input, run } from './testutil';
+import { FLAG } from './data/story';
 import { decodePassword, encodePassword, PASSWORD_LEN, SaveData } from './save';
 import { baseStats } from './stats';
 
+/** Miasto po scenkach wstępnych (intro, brama, nagroda za butelki już były). */
 function citySim(seed = 3, stamps = 0) {
-  return new Sim({ pole: true, romanian: true }, false, { seed, rules: (s) => new CityRules(s, { stamps }) });
+  const flags = FLAG.INTRO | FLAG.GATE | FLAG.PFAND_DONE;
+  return new Sim({ pole: true, romanian: true }, false, { seed, rules: (s) => new CityRules(s, { stamps, flags }) });
 }
 
 describe('Rozdział II — miasto', () => {
@@ -99,6 +102,117 @@ describe('Rozdział II — miasto', () => {
     expect(sim.snapshot().city?.ar).toBe('baza');
     expect(sim.players.pole.down).toBe(false);
     expect(events.some((e) => e.e === 'end')).toBe(false);
+  });
+});
+
+describe('Rozdział II — fabuła', () => {
+  it('nowa gra zaczyna się scenką u Haliny, która zatrzymuje świat', () => {
+    const sim = new Sim({ pole: true, romanian: true }, false, { seed: 1, rules: (s) => new CityRules(s) });
+    const ev = sim.snapshot().ev;
+    expect(ev.some((e) => e.e === 'dialog')).toBe(true);
+    expect(sim.cutT).toBeGreaterThan(0);
+    sim.skipCutscene();
+    const { events } = run(sim, 0.1, {});
+    expect(events.some((e) => e.e === 'dialog_end')).toBe(true);
+    expect(sim.cutT).toBe(0);
+    expect(sim.npcs.some((n) => n.kind === 'halina')).toBe(true);
+  });
+
+  it('boss: scenka, walka, pieczątka', () => {
+    const sim = citySim();
+    const rules = sim.rules as CityRules;
+    rules.load('garten', null);
+    const seq = sim.rules.seq;
+    const boss = sim.npcs.find((n) => n.kind === 'b_gunther')!;
+    expect(boss.role).toBe('boss');
+    run(sim, 0.2, { pole: input(boss.x - 150, boss.y, { face: 1, ar: seq }) });
+    expect(sim.cutT).toBeGreaterThan(0);
+    sim.skipCutscene();
+    run(sim, 0.1, { pole: input(boss.x - 150, boss.y, { face: 1, ar: seq }) });
+    expect(boss.rage).toBe(true);
+    expect(sim.snapshot().city?.boss?.[0]).toBe('boss.gunther');
+    boss.hp = 1;
+    boss.state = 'chase';
+    sim.players.pole.invuln = 0;
+    sim.update(1 / 60, { pole: input(boss.x - 20, boss.y, { face: 1, atk: 1, ar: seq }) });
+    expect(boss.state).toBe('ko');
+    sim.skipCutscene();
+    run(sim, 0.2, { pole: input(100, 250, { ar: seq }) });
+    expect(rules.state.stamps & 2).toBe(2);
+    // pokonany boss nie wraca
+    rules.load('garten', null);
+    expect(sim.npcs.some((n) => n.kind === 'b_gunther')).toBe(false);
+  });
+
+  it('bęben Thorstena przewraca stojących, skaczący są bezpieczni', () => {
+    const hit = (z: number) => {
+      const sim = citySim();
+      (sim.rules as CityRules).load('stadion', null);
+      const seq = sim.rules.seq;
+      const th = sim.npcs.find((n) => n.kind === 'b_thorsten')!;
+      th.introDone = true;
+      th.rage = true;
+      th.state = 'drum';
+      th.t = 0.01;
+      sim.players.pole.invuln = 0;
+      sim.update(1 / 60, { pole: input(th.x + 60, th.y, { z, ar: seq }) });
+      return sim.players.pole.kd;
+    };
+    expect(hit(0)).toBeGreaterThan(0);
+    expect(hit(20)).toBe(0);
+  });
+
+  it('urzędnik wypisuje mandat zamiast bić', () => {
+    const sim = citySim();
+    (sim.rules as CityRules).load('altstadt', null);
+    sim.npcs = [];
+    const seq = sim.rules.seq;
+    sim.money = 100;
+    const b = sim.addNpc('beamter', 'thug', 700, 200, 40, 1400, -1);
+    b.rage = true;
+    b.state = 'strike';
+    sim.players.pole.invuln = 0;
+    sim.players.pole.in.x = 680;
+    sim.players.pole.in.y = 200;
+    (sim as unknown as { npcStrike: (n: unknown) => void }).npcStrike(b);
+    expect(sim.money).toBeLessThan(100);
+    void seq;
+  });
+
+  it('finał: Klaus pokonany → auto → ucieczka', () => {
+    const sim = citySim(5, 31);
+    const rules = sim.rules as CityRules;
+    rules.load('holownia', null);
+    sim.npcs = sim.npcs.filter((n) => n.boss);
+    const klaus = sim.npcs.find((n) => n.kind === 'b_klaus')!;
+    const seq = sim.rules.seq;
+    klaus.introDone = true;
+    klaus.hp = 1;
+    klaus.state = 'chase';
+    klaus.rage = true;
+    sim.update(1 / 60, { pole: input(klaus.x - 20, klaus.y, { face: 1, atk: 1, ar: seq }) });
+    sim.skipCutscene();
+    run(sim, 0.1, {});
+    expect(rules.car).not.toBeNull();
+    const cx = rules.car!.x;
+    const { events } = run(sim, 5, {
+      pole: input(cx, 236, { act: true, anim: 'act', ar: seq }),
+      romanian: input(cx + 10, 236, { act: true, anim: 'act', ar: seq }),
+    });
+    expect(events.some((e) => e.e === 'end' && e.win)).toBe(true);
+    expect(rules.state.flags & FLAG.FINISHED).toBeTruthy();
+  });
+
+  it('ukryty krasnal daje statystyki obu graczom', () => {
+    const sim = citySim();
+    const rules = sim.rules as CityRules;
+    rules.load('garten', null);
+    sim.npcs = [];
+    const seq = sim.rules.seq;
+    const w0 = sim.players.romanian.stats.wytrz;
+    run(sim, 2, { pole: input(700, 166, { act: true, anim: 'act', ar: seq }) });
+    expect(rules.state.gnomes & 2).toBe(2);
+    expect(sim.players.romanian.stats.wytrz).toBe(w0 + 1);
   });
 });
 

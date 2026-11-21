@@ -531,7 +531,80 @@ def gen_city():
     print("tla miasta: baza, bahnhof, garten, industrie, stadion, altstadt, holownia")
 
 
+# ---------------------------------------------------------------------------
+# POSTACIE ROZDZIALU II: bandy, bossowie, Halina i Costel
+# ---------------------------------------------------------------------------
+SKIN_L = rgb(0xF2C39B)
+SKIN_T = rgb(0xD9A066)
+
+CHARS2 = {
+    # bandy
+    "kontroler": dict(skin=SKIN_L, hair=rgb(0x7A4A28), hair_style="short", hat="police", mustache=rgb(0x7A4A28), glasses=True,
+                      top=rgb(0x24408A), top2=rgb(0xF2C230), top_style="police", legs=rgb(0x1E2A48), legs_style="pants",
+                      shoes=rgb(0x101014), attack="punch"),
+    "pfandler": dict(skin=rgb(0xE8A888), hair=rgb(0x8A7A6A), hair_style="short", mustache=rgb(0x9A9A9A),
+                     top=rgb(0x7A6A4A), top_style="jacket", legs=rgb(0x505860), legs_style="pants",
+                     shoes=rgb(0x3A2A1A), attack="punch"),
+    "ultra": dict(skin=SKIN_L, hair=rgb(0xC8A060), hair_style="buzz", brows=True,
+                  top=rgb(0x3E8E48), top2=rgb(0xF4F4F4), top_style="flag", legs=rgb(0x3A4A6A), legs_style="pants",
+                  shoes=rgb(0xF4F4F4), attack="kick"),
+    "beamter": dict(skin=SKIN_L, hair=rgb(0x5A4A3A), hair_style="slick", hat="police", glasses=True,
+                    top=rgb(0x6A7A90), top2=rgb(0xF2C230), top_style="police", legs=rgb(0x3A4250), legs_style="pants",
+                    shoes=rgb(0x101014), attack="punch"),
+    # sklepikarze
+    "halina": dict(skin=SKIN_L, hair=rgb(0xC0502A), hair_style="bob", lips=True,
+                   top=rgb(0xD8263A), top_style="coat", legs=rgb(0x3A3048), legs_style="skirt",
+                   shoes=rgb(0x5A3A20), attack="punch"),
+    "costel": dict(skin=SKIN_T, hair=rgb(0x2A2020), hair_style="short", mustache=rgb(0x2A2020), brows=True,
+                   top=rgb(0x1F3F98), top_style="polo", legs=rgb(0x2A2A35), legs_style="pants",
+                   shoes=rgb(0x3B2418), attack="punch"),
+    # bossowie
+    "b_fahr": dict(skin=SKIN_L, hair=rgb(0x3A2A20), hair_style="short", hat="police", mustache=rgb(0x3A2A20), shades=True,
+                   top=rgb(0x182A60), top2=rgb(0xD8263A), top_style="police", legs=rgb(0x101830), legs_style="pants",
+                   shoes=rgb(0x101014), attack="punch"),
+    "b_gunther": dict(skin=SKIN_L, hair=rgb(0xD8D8D8), hair_style="short", hat="straw", mustache=rgb(0xE8E8E8), brows=True,
+                      top=rgb(0xF0F0F0), top2=rgb(0x2E6A36), top_style="overalls", legs=rgb(0x2E6A36), legs_style="pants",
+                      shoes=rgb(0x5A3A20), attack="punch"),
+    "b_paul": dict(skin=rgb(0xE8A888), hair=rgb(0x8A6A4A), hair_style="curly", mustache=rgb(0x8A6A4A), band=rgb(0xE03030),
+                   top=rgb(0xB06030), top_style="jacket", legs=rgb(0x404850), legs_style="pants",
+                   shoes=rgb(0x2A2A2A), attack="punch"),
+    "b_thorsten": dict(skin=SKIN_L, hair=rgb(0xE8D8A0), hair_style="buzz", shades=True,
+                       top=rgb(0x3E8E48), top2=rgb(0xF4F4F4), top_style="flag", legs=rgb(0x202028), legs_style="pants",
+                       shoes=rgb(0x202020), attack="punch"),
+    "b_paragraf": dict(skin=SKIN_L, hair=rgb(0x8A8A92), hair_style="bob", glasses=True, lips=True,
+                       top=rgb(0x404858), top2=rgb(0xC02028), top_style="suit", legs=rgb(0x303840), legs_style="skirt",
+                       shoes=rgb(0x101014), attack="punch"),
+    "b_klaus": dict(skin=SKIN_L, hair=rgb(0x8A6A4A), hair_style="bald", mustache=rgb(0x6A4A2A), brows=True,
+                    top=rgb(0xF07020), top2=rgb(0xF2F230), top_style="police", legs=rgb(0x2A3A5A), legs_style="pants",
+                    shoes=rgb(0x202020), attack="punch"),
+}
+
+
+def drum(img):
+    """Beben Thorstena na brzuchu (na klatkach stojacych)."""
+    d = ImageDraw.Draw(img)
+    x, y = G.CX + 2, 25
+    d.rectangle([x, y, x + 8, y + 6], fill=rgb(0xD8263A))
+    d.rectangle([x, y, x + 8, y + 1], fill=rgb(0xF4F4F4))
+    d.rectangle([x, y + 5, x + 8, y + 6], fill=rgb(0xF4F4F4))
+    d.line([(x + 1, y + 2), (x + 7, y + 4)], fill=rgb(0xF2C230))
+    return img
+
+
+def gen_chars2():
+    for key, spec in CHARS2.items():
+        sheet = Image.new("RGBA", (G.FW * len(G.FRAMES), G.FH), (0, 0, 0, 0))
+        for i, f in enumerate(G.FRAMES):
+            fr = G.draw_character(spec, f)
+            if key == "b_thorsten" and f not in ("down", "jump", "jatk"):
+                fr = drum(fr)
+            sheet.paste(fr, (i * G.FW, 0))
+        sheet.save(os.path.join(OUT, f"char_{key}.png"))
+    print("postacie II:", ", ".join(CHARS2.keys()))
+
+
 if __name__ == "__main__":
     gen_items()
     gen_city()
+    gen_chars2()
     print("OK ->", OUT)

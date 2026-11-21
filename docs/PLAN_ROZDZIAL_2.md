@@ -9,6 +9,17 @@ nazwanymi członkami, bossowie z gadką przed walką, bronie podnoszone z ulicy 
 > grafik, map ani muzyki z RCR. Wszystko pozostaje naszą satyrą na polsko-rumuńsko-niemieckie
 > stereotypy, w tej samej proceduralnej oprawie z `tools/`.
 
+## Stan wdrożenia
+
+Wszystkie etapy z sekcji 5 są wdrożone (PR #1). Decyzje z sekcji 6 podjęte tak:
+- **wspólna kasa Unii** (jedno pole `money` dla obu graczy),
+- **bez friendly fire** (do ewentualnego dodania jako opcja w lobby),
+- przejście między dzielnicami: **obaj przy wyjściu albo dociągnięcie po 3 s**,
+- Rozdział II **dostępny od razu** z lobby (PROLOG / ROZDZIAŁ II / KONTYNUUJ / HASŁO).
+
+Różnice względem pierwotnego planu: blok to przytrzymanie AKCJI bez celu (bez dodatkowego przycisku),
+butelka w automacie daje 1 € (kasa jest w pełnych euro), bossowie walczą w swoich dzielnicach zamiast w osobnych obszarach.
+
 ---
 
 ## 1. Co już mamy (punkt wyjścia)

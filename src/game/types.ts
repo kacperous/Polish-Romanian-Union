@@ -91,6 +91,9 @@ export type GameEvent =
   | { e: 'shop'; who: CharId; shop: string }
   | { e: 'area'; id: string }
   | { e: 'cry'; x: number; y: number; k: string }
+  | { e: 'dialog'; lines: [string, string][] }
+  | { e: 'dialog_end' }
+  | { e: 'shake' }
   | { e: 'save' }
   | { e: 'eat'; who: CharId; good: string; ups: string[] }
   | { e: 'end'; win: boolean; reason: string };
@@ -103,8 +106,14 @@ export interface CitySnap {
   seq: number;
   /** pieczątki szefów band (bity) */
   stamps: number;
+  /** znalezione ukryte krasnale (bity) */
+  gnomes: number;
   /** postęp czekania przy wyjściu 0..1 (co-op) */
   wait: number;
+  /** [klucz imienia bossa, życie 0..1] w trakcie walki z bossem */
+  boss: [string, number] | null;
+  /** auto w finale: [x, odjechało] */
+  car: [number, 0 | 1] | null;
 }
 
 export interface Snapshot {

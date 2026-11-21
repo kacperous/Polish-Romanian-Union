@@ -103,9 +103,9 @@ export const CITY: Record<CityAreaId, CityArea> = {
     spawns: [
       civ('herr', 300, 190, W(3)),
       civ('frau', 900, 240, W(3), 1),
-      thug('herr', 700, 200, W(3)),
-      thug('jogger', 1000, 230, W(3)),
-      thug('herr', 1250, 250, W(3)),
+      thug('kontroler', 640, 200, W(3)),
+      thug('kontroler', 680, 236, W(3)),
+      thug('kontroler', 1000, 216, W(3)),
     ],
     items: [
       { kind: 'bottle', x: 520, y: 180 },
@@ -151,10 +151,9 @@ export const CITY: Record<CityAreaId, CityArea> = {
       { kind: 'pfand', x: 900 },
     ],
     spawns: [
-      thug('jogger', 520, 200, W(3)),
-      thug('herr', 760, 240, W(3)),
-      thug('jogger', 1040, 186, W(3)),
-      thug('herr', 1260, 226, W(3)),
+      thug('pfandler', 520, 200, W(3)),
+      thug('pfandler', 760, 240, W(3)),
+      thug('pfandler', 1040, 186, W(3)),
     ],
     items: [
       { kind: 'crate', x: 640, y: 168 },
@@ -176,10 +175,10 @@ export const CITY: Record<CityAreaId, CityArea> = {
     ],
     props: [],
     spawns: [
-      thug('jogger', 400, 200, W(3)),
-      thug('jogger', 520, 236, W(3)),
-      thug('herr', 820, 210, W(3)),
-      thug('jogger', 1100, 190, W(3)),
+      thug('ultra', 1000, 200, W(3)),
+      thug('ultra', 1040, 236, W(3)),
+      thug('ultra', 700, 210, W(3)),
+      thug('ultra', 480, 190, W(3)),
     ],
     items: [
       { kind: 'bottle', x: 600, y: 176 },
@@ -206,9 +205,9 @@ export const CITY: Record<CityAreaId, CityArea> = {
     spawns: [
       civ('frau', 1000, 200, W(3), 1),
       civ('opa', 1250, 240, W(3)),
-      thug('herr', 600, 190, W(3)),
-      thug('frau', 380, 230, W(3)),
-      thug('herr', 200, 210, W(3)),
+      thug('beamter', 640, 190, W(3)),
+      thug('beamter', 460, 230, W(3)),
+      thug('beamter', 1200, 210, W(3)),
     ],
     items: [
       { kind: 'binder', x: 520, y: 170 },
@@ -224,7 +223,7 @@ export const CITY: Record<CityAreaId, CityArea> = {
     coins: 25,
     exits: [{ side: 'R', to: 'altstadt' }],
     props: [],
-    spawns: [thug('boss', 400, 210, W(2)), thug('herr', 300, 240, W(2)), thug('herr', 560, 190, W(2))],
+    spawns: [thug('kontroler', 760, 240, W(2)), thug('ultra', 700, 190, W(2)), thug('beamter', 600, 220, W(2))],
     items: [{ kind: 'tire', x: 250, y: 200 }],
   },
 };

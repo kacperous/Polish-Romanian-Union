@@ -17,6 +17,7 @@ import { PrologRules } from './chapters/prolog';
 import { ITEMS, ItemKind, NPC_THROW_DMG } from './data/items';
 import { GOODS, INV_SLOTS, SHOPS, ShopId } from './data/shops';
 import { canLearn, hasTech, techBit, TechId } from './data/techniques';
+import { DIALOG_LINE, DialogLine, GANG_NAMES, NPC_PARAMS } from './data/story';
 import {
   attackDmg,
   baseStats,
@@ -63,7 +64,9 @@ export type NpcState =
   | 'getup'
   | 'held'
   | 'thrown'
-  | 'aim';
+  | 'aim'
+  | 'charge'
+  | 'drum';
 
 export interface Npc {
   id: number;
@@ -108,6 +111,16 @@ export interface Npc {
   blindT: number;
   /** do usunięcia (pokonany członek bandy znika) */
   gone: boolean;
+  /** imię członka bandy (pokazywane przy pierwszym trafieniu) */
+  name: string | null;
+  /** id bossa (Rozdział II) */
+  boss: string | null;
+  /** scenka powitalna bossa już była */
+  introDone: boolean;
+  /** odliczanie ataku specjalnego (szarża, bęben, wyczarowanie przedmiotu) */
+  spT: number;
+  /** boss w drugiej fazie (poniżej połowy życia) */
+  phase2: boolean;
 }
 
 export interface Item {
@@ -205,16 +218,6 @@ const SNEAKY: ActKind[] = ['pickpocket', 'gnome', 'lockpick', 'carlock', 'bike']
 /** Akcje, których czas skraca Lekka ręka. */
 const HANDY: ActKind[] = ['pickpocket', 'lockpick', 'carlock', 'loot'];
 
-/** Życie NPC (gracz zadaje ~11–20 na cios). */
-const BASE_HP: Record<NpcKind, number> = {
-  herr: 40,
-  frau: 30,
-  jogger: 40,
-  opa: 30,
-  gartner: 50,
-  boss: 60,
-  polizei: 70,
-};
 const RAGE_HP = 30;
 /** Grawitacja lotu rzuconych przedmiotów i ludzi (mniejsza niż przy skoku = dalszy rzut). */
 const ITEM_GRAVITY = 300;
@@ -245,6 +248,10 @@ export class Sim {
   time = 0;
   ended = false;
   private events: GameEvent[] = [];
+  /** scenka dialogowa: wrogowie stoją, gracze są nietykalni */
+  cutT = 0;
+  /** wywoływane po zakończeniu scenki */
+  private afterCut: (() => void)[] = [];
   private policeCooldown = 0;
   private hintCd: Record<CharId, number> = { pole: 0, romanian: 0 };
   readonly rng: Rng;
@@ -294,8 +301,9 @@ export class Sim {
 
   // -------------------------------------------------------------------------
   addNpc(kind: NpcKind, role: Role, x: number, y: number, minX: number, maxX: number, face: 1 | -1 = -1): Npc {
-    const hp = BASE_HP[kind];
-    const speed = kind === 'jogger' ? 42 : kind === 'opa' ? 14 : kind === 'polizei' ? 50 : 22;
+    const par = NPC_PARAMS[kind];
+    const hp = par.hp;
+    const speed = par.speed;
     const n: Npc = {
       id: this.nextId++,
       kind,
@@ -307,7 +315,7 @@ export class Sim {
       face,
       hp,
       maxHp: hp,
-      state: role === 'guard' ? 'idle' : 'walk',
+      state: role === 'guard' || role === 'boss' || role === 'keeper' ? 'idle' : 'walk',
       t: this.rand(1, 4),
       turnT: this.rand(2, 5),
       warn: false,
@@ -327,9 +335,14 @@ export class Sim {
       hitIds: [],
       holdItem: -1,
       coins: 0,
-      grabs: role !== 'police' && this.rng() < 0.4,
+      grabs: !!par.grabs || (role !== 'police' && role !== 'keeper' && role !== 'boss' && this.rng() < 0.4),
       blindT: 0,
       gone: false,
+      name: null,
+      boss: null,
+      introDone: false,
+      spT: this.rand(1, 3),
+      phase2: false,
     };
     this.npcs.push(n);
     return n;
@@ -392,6 +405,30 @@ export class Sim {
 
   alive(): PlayerSim[] {
     return Object.values(this.players).filter((p) => p.present && !p.down && !p.inCar && !p.shop);
+  }
+
+  /** Członek bandy albo boss. */
+  isGang(n: Npc): boolean {
+    return n.role === 'thug' || n.role === 'boss';
+  }
+
+  /** Scenka dialogowa (kolejne wywołania dopisują linijki). */
+  dialog(lines: DialogLine[], then?: () => void) {
+    this.cutT += lines.length * DIALOG_LINE + (this.cutT > 0 ? 0 : 0.3);
+    if (then) this.afterCut.push(then);
+    this.ev({ e: 'dialog', lines });
+  }
+
+  skipCutscene() {
+    if (this.cutT > 0) this.cutT = 0.001;
+  }
+
+  private endCutscene() {
+    this.cutT = 0;
+    this.ev({ e: 'dialog_end' });
+    const fns = this.afterCut;
+    this.afterCut = [];
+    fns.forEach((f) => f());
   }
 
   has(p: PlayerSim, t: TechId): boolean {
@@ -502,7 +539,7 @@ export class Sim {
   }
 
   enrage(n: Npc, by?: PlayerSim) {
-    if (n.state === 'ko') return;
+    if (n.state === 'ko' || n.role === 'keeper') return;
     if (!n.rage) {
       n.rage = true;
       n.maxHp += RAGE_HP;
@@ -510,7 +547,7 @@ export class Sim {
       this.txt(n.kind === 'polizei' ? 'HALT!' : 'WUT!', n.x, n.y - 46, '#ff3b3b');
       this.sfx('rage');
       // banda nie dzwoni na policję
-      if (n.role !== 'thug') this.alarm += n.kind === 'polizei' ? 25 : 10;
+      if (!this.isGang(n)) this.alarm += n.kind === 'polizei' ? 25 : 10;
     }
     n.warn = false;
     n.alertT = 1;
@@ -540,7 +577,9 @@ export class Sim {
         }
         if (newAtk > p.lastAtk) {
           p.lastAtk = newAtk;
-          if (!p.down && !p.inCar && p.kd <= 0) {
+          if (this.cutT > 0) {
+            // cios w trakcie scenki = pominięcie linijki (tylko u hosta / solo)
+          } else if (!p.down && !p.inCar && p.kd <= 0) {
             const it = this.item(p.holdItem);
             if (p.holdNpc >= 0) this.throwHeld(p);
             else if (it && (ITEMS[it.kind].type === 'throw' || p.in.ak === 'j')) this.throwItem(p, it);
@@ -553,6 +592,12 @@ export class Sim {
       p.hitsT = Math.max(0, p.hitsT - dt);
       if (p.hitsT <= 0) p.hits = 0;
       this.hintCd[id] = Math.max(0, this.hintCd[id] - dt);
+    }
+    if (this.cutT > 0) {
+      this.cutT -= dt;
+      for (const p of Object.values(this.players)) p.invuln = Math.max(p.invuln, 0.5);
+      if (this.cutT <= 0) this.endCutscene();
+      return this.snapshot();
     }
     if (!this.ended) {
       for (const p of Object.values(this.players)) if (p.present) this.updateAct(p, dt);
@@ -570,14 +615,14 @@ export class Sim {
   // -------------------------------------------------------------------------
   knockOut(n: Npc) {
     this.npcDrop(n);
-    if (n.role === 'thug') this.ev({ e: 'cry', x: Math.round(n.x), y: Math.round(n.y), k: n.kind });
+    if (this.isGang(n)) this.ev({ e: 'cry', x: Math.round(n.x), y: Math.round(n.y), k: n.kind });
     if (n.coins > 0) {
       this.spawnCoins(n.x, n.y, n.coins);
       n.coins = 0;
     }
     n.hp = 0;
     n.state = 'ko';
-    n.t = n.role === 'thug' ? 3 : 10;
+    n.t = n.role === 'thug' ? 3 : n.role === 'boss' ? 1e9 : 10;
     n.z = 0;
     n.vz = 0;
     n.rage = false;
@@ -597,6 +642,20 @@ export class Sim {
   damageNpc(n: Npc, dmg: number, knock: boolean, by?: PlayerSim): boolean {
     n.hp -= dmg;
     n.warn = false;
+    if (n.role === 'thug' && !n.name) {
+      n.name = GANG_NAMES[this.randi(0, GANG_NAMES.length - 1)];
+      this.txt(n.name, n.x, n.y - 58, '#a8d8ff');
+    }
+    if (n.role === 'boss') {
+      // bossa trudno przewrócić
+      if (knock && this.rng() > 0.3) knock = false;
+      if (!n.phase2 && n.hp > 0 && n.hp < n.maxHp / 2) {
+        n.phase2 = true;
+        n.speed *= 1.25;
+        this.txt('WUT!!', n.x, n.y - 56, '#ff3b3b');
+        this.sfx('rage');
+      }
+    }
     if (n.hp <= 0) {
       this.knockOut(n);
       return true;
@@ -606,7 +665,7 @@ export class Sim {
       this.knockDown(n);
     } else {
       n.state = 'hurt';
-      n.t = 0.35;
+      n.t = n.role === 'boss' ? 0.12 : 0.35;
       this.enrage(n, by);
     }
     return false;
@@ -630,7 +689,7 @@ export class Sim {
     this.sfx('swing');
     let hitSomething = false;
     for (const n of this.npcs) {
-      if (UNHITTABLE.includes(n.state)) continue;
+      if (UNHITTABLE.includes(n.state) || n.role === 'keeper') continue;
       const dx = spin ? Math.abs(n.x - x) : (n.x - x) * face;
       if (dx < -4 || dx > range || Math.abs(n.y - y) > 14) continue;
       hitSomething = true;
@@ -657,7 +716,7 @@ export class Sim {
   /** Świadkowie bójki podnoszą alarm i czasem się wkurzają. */
   private witnesses(p: PlayerSim, x: number, y: number) {
     for (const w of this.npcs) {
-      if (w.rage || w.role === 'thug' || DISABLED.includes(w.state)) continue;
+      if (w.rage || this.isGang(w) || w.role === 'keeper' || DISABLED.includes(w.state)) continue;
       if (this.sees(w, x, y, 130)) {
         this.alarm += 5;
         w.alertT = 1.2;
@@ -703,7 +762,7 @@ export class Sim {
     const thrower = n.by ? this.players[n.by] : undefined;
     const dmg = thrower ? Math.round(throwDmg(thrower.stats) * (this.has(thrower, 'oszczep') ? 1.5 : 1)) : 15;
     for (const o of this.npcs) {
-      if (o === n || UNHITTABLE.includes(o.state) || n.hitIds.includes(o.id)) continue;
+      if (o === n || UNHITTABLE.includes(o.state) || o.role === 'keeper' || n.hitIds.includes(o.id)) continue;
       if (Math.abs(o.x - n.x) > 14 || Math.abs(o.y - n.y) > 12 || n.z > 30) continue;
       n.hitIds.push(o.id);
       o.vx = Math.sign(n.vx) * 150;
@@ -835,7 +894,7 @@ export class Sim {
       const thrower = this.players[it.by];
       const dmg = Math.round((throwDmg(thrower.stats) + def.dmg) * (this.has(thrower, 'oszczep') ? 1.5 : 1));
       for (const n of this.npcs) {
-        if (UNHITTABLE.includes(n.state) || it.hitIds.includes(n.id)) continue;
+        if (UNHITTABLE.includes(n.state) || n.role === 'keeper' || it.hitIds.includes(n.id)) continue;
         if (Math.abs(n.x - it.x) > 12 || Math.abs(n.y - it.y) > 12) continue;
         it.hitIds.push(n.id);
         n.vx = Math.sign(it.vx) * 150;
@@ -920,7 +979,7 @@ export class Sim {
     // kieszonkowiec — tylko Rumun, od tyłu
     if (p.id === 'romanian') {
       for (const n of this.npcs) {
-        if (n.robbed || n.rage || DISABLED.includes(n.state)) continue;
+        if (n.robbed || n.rage || n.role === 'keeper' || DISABLED.includes(n.state)) continue;
         if (Math.abs(n.x - p.in.x) > 26 || Math.abs(n.y - p.in.y) > 12) continue;
         const behind = n.face * (p.in.x - n.x) < 0;
         if (behind) return { kind: 'pickpocket', target: n.id };
@@ -929,7 +988,7 @@ export class Sim {
       }
     } else {
       for (const n of this.npcs) {
-        if (n.robbed || n.rage || DISABLED.includes(n.state)) continue;
+        if (n.robbed || n.rage || n.role === 'keeper' || DISABLED.includes(n.state)) continue;
         // podpowiedź tylko przy podchodzeniu od tyłu (przodem to blok)
         const behind = n.face * (p.in.x - n.x) < 0;
         if (behind && Math.abs(n.x - p.in.x) < 26 && Math.abs(n.y - p.in.y) < 12) {
@@ -983,7 +1042,7 @@ export class Sim {
   /** Sprawdza, czy ktoś widzi gracza przy cichej robocie. Jeśli tak — rage. */
   private caught(p: PlayerSim, kind: ActKind): boolean {
     for (const n of this.npcs) {
-      if (n.rage || n.blindT > 0 || DISABLED.includes(n.state)) continue;
+      if (n.rage || n.blindT > 0 || n.role === 'keeper' || DISABLED.includes(n.state)) continue;
       const range = n.role === 'guard' ? 170 : 110;
       if (!this.sees(n, p.in.x, p.in.y, range)) continue;
       // Brzytwa: pierwsze spojrzenie nic nie zauważa
@@ -1081,6 +1140,12 @@ export class Sim {
   private updateNpc(n: Npc, dt: number) {
     n.alertT = Math.max(0, n.alertT - dt);
     n.blindT = Math.max(0, n.blindT - dt);
+    n.spT = Math.max(0, n.spT - dt);
+    if (n.role === 'keeper') {
+      const pl = this.nearestPlayer(n);
+      if (pl) n.face = (pl.in.x >= n.x ? 1 : -1) as 1 | -1;
+      return;
+    }
     n.atkCd = Math.max(0, n.atkCd - dt);
     n.comboT = Math.max(0, n.comboT - dt);
     if (n.comboT <= 0) n.combo = 0;
@@ -1105,6 +1170,7 @@ export class Sim {
     const spd = n.speed * (n.rage ? 1.7 : 1);
     switch (n.state) {
       case 'ko':
+        if (n.role === 'boss') return;
         n.t -= dt;
         if (n.t <= 0 && n.role === 'thug') {
           // pokonany członek bandy znika (jak w River City Ransom)
@@ -1168,6 +1234,13 @@ export class Sim {
         n.t -= dt;
         if (n.t <= 0) this.npcThrow(n);
         return;
+      case 'charge':
+        this.updateCharge(n, dt);
+        return;
+      case 'drum':
+        n.t -= dt;
+        if (n.t <= 0) this.drumWave(n);
+        return;
       case 'chase': {
         let tgt = n.target ? this.players[n.target] : null;
         if (!tgt || !tgt.present || tgt.down || tgt.inCar) {
@@ -1186,6 +1259,8 @@ export class Sim {
         const dy = tgt.in.y - n.y;
         n.face = (dx >= 0 ? 1 : -1) as 1 | -1;
         const held = this.item(n.holdItem);
+        const par = NPC_PARAMS[n.kind];
+        if (this.gangSpecial(n, tgt, dx, dy, dt)) return;
         // podnieś coś z ziemi po drodze
         if (!held && n.grabs) {
           const it = this.items.find((q) => q.state === 'ground' && Math.abs(q.x - n.x) < 16 && Math.abs(q.y - n.y) < 10);
@@ -1199,7 +1274,7 @@ export class Sim {
           }
         }
         // rzut z dystansu
-        if (held && ITEMS[held.kind].type === 'throw' && n.atkCd <= 0 && Math.abs(dy) < 8 && Math.abs(dx) > 40 && Math.abs(dx) < 150) {
+        if (held && (ITEMS[held.kind].type === 'throw' || par.conjure) && n.atkCd <= 0 && Math.abs(dy) < 8 && Math.abs(dx) > 40 && Math.abs(dx) < 150) {
           n.state = 'aim';
           n.t = 0.5;
           return;
@@ -1208,10 +1283,11 @@ export class Sim {
         const mx = wantX - n.x;
         if (Math.abs(mx) > 2) n.x += Math.sign(mx) * Math.min(Math.abs(mx), spd * dt);
         if (Math.abs(dy) > 2) n.y += Math.sign(dy) * Math.min(Math.abs(dy), spd * 0.7 * dt);
-        const reach = held && ITEMS[held.kind].type === 'weapon' ? 34 : 26;
+        const reach = held && ITEMS[held.kind].type === 'weapon' ? 34 : par.reach ? par.reach - 4 : 26;
         if (Math.abs(dx) < reach && Math.abs(dy) < 8 && n.atkCd <= 0) {
           n.state = 'windup';
-          n.t = n.rage ? 0.3 : 0.4;
+          const w = par.windup ?? 0.4;
+          n.t = (n.rage ? w * 0.75 : w) * (n.phase2 ? 0.7 : 1);
         }
         return;
       }
@@ -1219,6 +1295,11 @@ export class Sim {
       case 'walk': {
         if (n.rage) {
           n.state = 'chase';
+          return;
+        }
+        // boss czeka na swoją scenkę
+        if (n.role === 'boss') {
+          n.state = 'idle';
           return;
         }
         // członek bandy rzuca się na graczy, gdy ich zobaczy
@@ -1283,6 +1364,96 @@ export class Sim {
     n.face = p.in.face;
   }
 
+  /** Ataki specjalne band i bossów; true = NPC zajęty w tej klatce. */
+  private gangSpecial(n: Npc, tgt: PlayerSim, dx: number, dy: number, dt: number): boolean {
+    const par = NPC_PARAMS[n.kind];
+    // Pfandsammler zbiera monety z ziemi, zanim gracz zdąży
+    if (par.stealsCoins) {
+      const c = this.coins.find((q) => Math.abs(q.x - n.x) < 70 && Math.abs(q.y - n.y) < 24);
+      if (c) {
+        const mx = c.x - n.x;
+        const my = c.y - n.y;
+        n.face = (mx >= 0 ? 1 : -1) as 1 | -1;
+        n.x += Math.sign(mx) * Math.min(Math.abs(mx), n.speed * 1.4 * dt);
+        n.y += Math.sign(my) * Math.min(Math.abs(my), n.speed * dt);
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) {
+          c.t = 0;
+          n.coins += c.v;
+          this.txt('MEINS!', n.x, n.y - 48, '#ffb060');
+          this.coins = this.coins.filter((q) => q !== c);
+        }
+        return true;
+      }
+    }
+    if (n.spT > 0 || n.atkCd > 0) return false;
+    // bęben: fala uderzeniowa — trzeba przeskoczyć
+    if (par.drum && Math.abs(dx) < 120 && Math.abs(dy) < 40) {
+      n.state = 'drum';
+      n.t = 1.0;
+      n.spT = n.phase2 ? 3.2 : 4.5;
+      this.txt('BUM... BUM...', n.x, n.y - 54, '#ffe040');
+      return true;
+    }
+    // szarża z rozbiegu (Klaus dopiero w drugiej fazie)
+    const canCharge = par.charge && (n.kind !== 'b_klaus' || n.phase2);
+    if (canCharge && Math.abs(dx) > 55 && Math.abs(dx) < 140 && Math.abs(dy) < 10) {
+      n.state = 'charge';
+      n.t = 0.7;
+      n.vx = 0;
+      n.spT = n.role === 'boss' ? 2.5 : 3.5;
+      n.hitIds = [];
+      this.txt(n.kind === 'ultra' ? 'OLÉ!' : '!!', n.x, n.y - 50, '#ff8080');
+      return true;
+    }
+    // boss wyczarowuje coś do rzucania
+    if (par.conjure && n.holdItem < 0) {
+      const it = this.addItem(par.conjure, n.x, n.y);
+      it.state = 'held';
+      it.byNpc = n.id;
+      n.holdItem = it.id;
+      n.spT = n.phase2 ? 1.4 : 2.2;
+      return false;
+    }
+    void tgt;
+    return false;
+  }
+
+  private updateCharge(n: Npc, dt: number) {
+    n.t -= dt;
+    n.x = Math.max(4, Math.min(this.areaW - 4, n.x + n.face * 175 * dt));
+    for (const p of this.alive()) {
+      const key = p.id === 'pole' ? -1 : -2;
+      if (n.hitIds.includes(key) || p.invuln > 0 || p.kd > 0 || p.in.z >= 12) continue;
+      if (Math.abs(p.in.x - n.x) > 16 || Math.abs(p.in.y - n.y) > 10) continue;
+      n.hitIds.push(key);
+      const blocking = p.in.anim === 'block' && p.in.face === -n.face;
+      if (!blocking) p.hits = 98; // szarża zawsze przewraca
+      this.hurtPlayer(p, Math.round(14 * (NPC_PARAMS[n.kind].dmg ?? 1)), n.face, blocking);
+    }
+    if (n.t <= 0) {
+      n.state = 'recover';
+      n.t = 0.6;
+      n.atkCd = 0.8;
+    }
+  }
+
+  /** Fala uderzeniowa bębna Thorstena. */
+  private drumWave(n: Npc) {
+    n.state = 'recover';
+    n.t = 0.8;
+    n.atkCd = 0.6;
+    this.sfx('hit');
+    this.ev({ e: 'shake' });
+    for (const k of [-60, -30, 0, 30, 60]) this.ev({ e: 'fx', k: 'dust', x: n.x + k, y: n.y });
+    this.txt('BUMM!', n.x, n.y - 54, '#ffe040');
+    for (const p of this.alive()) {
+      if (Math.abs(p.in.x - n.x) > 110 || Math.abs(p.in.y - n.y) > 40) continue;
+      if (p.in.z >= 4 || p.invuln > 0 || p.kd > 0) continue;
+      p.hits = 98;
+      this.hurtPlayer(p, 14, (p.in.x >= n.x ? 1 : -1) as 1 | -1);
+    }
+  }
+
   private nearestPlayer(n: Npc): PlayerSim | null {
     let best: PlayerSim | null = null;
     let bd = 1e9;
@@ -1319,14 +1490,25 @@ export class Sim {
     n.atkCd = n.rage ? 0.6 : 1.0;
     const held = this.item(n.holdItem);
     const weapon = held && ITEMS[held.kind].type === 'weapon' ? ITEMS[held.kind] : null;
-    const raw = (n.rage ? NPC_DMG * 2 : NPC_DMG) + (weapon ? weapon.dmg : 0);
-    const reach = weapon ? 38 : 30;
+    const par = NPC_PARAMS[n.kind];
+    const raw = Math.round(((n.rage ? NPC_DMG * 2 : NPC_DMG) + (weapon ? weapon.dmg : 0)) * (par.dmg ?? 1));
+    const reach = weapon ? 38 : par.reach ?? 30;
     for (const p of this.alive()) {
       const dx = (p.in.x - n.x) * n.face;
       if (dx < -4 || dx > reach || Math.abs(p.in.y - n.y) > 12) continue;
       if (p.in.z >= 12) continue; // przeskoczył
       if (p.invuln > 0 || p.kd > 0) continue;
       const blocking = p.in.anim === 'block' && p.in.face === -n.face;
+      if (par.mandat && !blocking) {
+        // Ordnungsamt: mandat zamiast bólu
+        const fine = Math.min(this.money, this.randi(5, 15));
+        this.money -= fine;
+        this.alarm += 8;
+        this.txt(fine > 0 ? `MANDAT −${fine}€` : 'MANDAT!', p.in.x, p.in.y - 50, '#ffb060');
+        this.sfx('alert');
+        this.hurtPlayer(p, 4, n.face);
+        continue;
+      }
       this.hurtPlayer(p, raw, n.face, blocking);
     }
   }
@@ -1418,7 +1600,10 @@ export class Sim {
       case 'recover':
         return 'atk';
       case 'aim':
+      case 'drum':
         return 'hold';
+      case 'charge':
+        return 'run';
       case 'walk':
       case 'flee':
         return 'walk';
