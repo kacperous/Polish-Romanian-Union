@@ -3,6 +3,7 @@
  * Rozdział II dokłada kolejne obszary połączone wyjściami.
  */
 import { LEVEL_W, NpcKind } from '../constants';
+import type { ItemKind } from './items';
 
 export type Role = 'walker' | 'guard' | 'police';
 
@@ -14,6 +15,12 @@ export interface SpawnDef {
   minX: number;
   maxX: number;
   face?: 1 | -1;
+}
+
+export interface ItemSpawn {
+  kind: ItemKind;
+  x: number;
+  y: number;
 }
 
 export interface BgDef {
@@ -30,6 +37,7 @@ export interface AreaDef {
   /** dalekie tła paralaksy — po jednym na każde tło bliskie (przenikają się) */
   far: string[];
   spawns: SpawnDef[];
+  items?: ItemSpawn[];
 }
 
 const L1 = { x0: LEVEL_W * 2, x1: LEVEL_W * 3 };
@@ -66,5 +74,17 @@ export const PROLOG: AreaDef = {
     { kind: 'jogger', role: 'walker', x: 820, y: 252, minX: L3.x0 + 10, maxX: L3.x1 - 10 },
     { kind: 'herr', role: 'walker', x: 520, y: 178, minX: L3.x0 + 30, maxX: L3.x1 - 30 },
     { kind: 'polizei', role: 'walker', x: 620, y: 226, minX: L3.x0 + 300, maxX: L3.x1 - 30 },
+  ],
+  items: [
+    { kind: 'bin', x: 2760, y: 164 },
+    { kind: 'bottle', x: 2560, y: 230 },
+    { kind: 'rake', x: 2330, y: 168 },
+    { kind: 'bottle', x: 1960, y: 182 },
+    { kind: 'cone', x: 1650, y: 250 },
+    { kind: 'crate', x: 1390, y: 166 },
+    { kind: 'baguette', x: 1240, y: 172 },
+    { kind: 'bin', x: 1080, y: 164 },
+    { kind: 'tire', x: 800, y: 240 },
+    { kind: 'bottle', x: 610, y: 176 },
   ],
 };

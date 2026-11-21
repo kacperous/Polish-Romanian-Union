@@ -11,6 +11,7 @@ export function input(x: number, y: number, extra: Partial<PlayerInput> = {}): P
 export function emptySim(opts: { solo?: boolean; seed?: number; present?: Record<CharId, boolean> } = {}): Sim {
   const sim = new Sim(opts.present ?? { pole: true, romanian: true }, opts.solo ?? false, { seed: opts.seed ?? 1 });
   sim.npcs = [];
+  sim.items = [];
   return sim;
 }
 

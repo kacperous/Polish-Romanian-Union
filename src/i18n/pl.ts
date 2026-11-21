@@ -118,6 +118,19 @@ export const pl = {
   'btn.jump': 'SKOK',
   'hint.holding': 'BIJ: rzuć nim!  •  AKCJA: puść',
   'hint.lift': 'AKCJA: podnieś leżącego (potem BIJ = rzut)',
+  'hint.pickup': 'AKCJA: podnieś {i}',
+  'hint.holding_item': 'BIJ: rzuć!  •  AKCJA: odłóż',
+  'hint.weapon': 'BIJ: zamach  •  SKOK + BIJ: rzut  •  AKCJA: odłóż',
+  'f.broke': 'PĘKŁO!',
+  'item.bin': 'kosz na śmieci',
+  'item.bottle': 'butelkę zwrotną',
+  'item.cone': 'pachołek',
+  'item.rake': 'grabie',
+  'item.baguette': 'bagietkę',
+  'item.crate': 'skrzynkę po piwie',
+  'item.tire': 'oponę',
+  'item.binder': 'segregator',
+  'item.gnome': 'krasnala',
 };
 
 export type Dict = Record<keyof typeof pl, string>;

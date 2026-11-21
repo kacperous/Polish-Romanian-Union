@@ -21,6 +21,7 @@ import {
 } from '../game/constants';
 import { Sim } from '../game/Sim';
 import { PROLOG } from '../game/data/areas';
+import { ITEMS } from '../game/data/items';
 import { attackCooldown, baseStats, moveSpeed, statsFromArray } from '../game/stats';
 import {
   AtkKind,
@@ -147,6 +148,8 @@ export class GameScene extends Phaser.Scene {
   private fullStickT = 0;
 
   private views: Record<CharId, CharView> = {} as never;
+  private itemViews = new Map<number, { img: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image; spin: number }>();
+  private coinViews = new Map<number, Phaser.GameObjects.Image>();
   private npcViews = new Map<number, CharView>();
   private gnome!: Phaser.GameObjects.Image;
   private bike!: Phaser.GameObjects.Sprite;
@@ -184,6 +187,8 @@ export class GameScene extends Phaser.Scene {
     this.pendingEv = [];
     this.offs = [];
     this.npcViews = new Map();
+    this.itemViews = new Map();
+    this.coinViews = new Map();
     this.stage = 0;
     this.levelSeen = -1;
     this.startTime = this.time.now;
@@ -309,7 +314,8 @@ export class GameScene extends Phaser.Scene {
     const ps = this.snap?.p[this.me];
     const down = !!ps?.down;
     const inCar = !!ps?.inCar;
-    const holding = !!ps?.hold;
+    // nad głową: wróg (1) albo ciężki przedmiot (2); broń (3) trzyma się w ręce
+    const holding = ps?.hold === 1 || ps?.hold === 2;
     const st = ps ? statsFromArray(ps.st) : baseStats(this.me);
 
     this.atkT = Math.max(0, this.atkT - dt);
@@ -601,6 +607,8 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
+      this.renderItems(s, dt);
+
       // przedmioty
       this.gnome.setVisible(!s.o.gnome);
       this.bike.setVisible(!s.o.bike).setFrame(s.o.lockHp > 0 ? 0 : 1);
@@ -651,6 +659,93 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Przedmioty z ulicy i monety na ziemi. */
+  private renderItems(s: Snapshot, dt: number) {
+    const lerp = Math.min(1, dt * 14);
+    const seen = new Set<number>();
+    for (const [id, kind, x, y, z, holder, thrown] of s.it) {
+      seen.add(id);
+      let v = this.itemViews.get(id);
+      const tex = kind === 'gnome' ? 'gnome' : `it_${kind}`;
+      if (!v) {
+        v = { img: this.add.image(x, y, tex).setOrigin(0.5, 1), shadow: this.add.image(x, y, 'shadow').setScale(0.6).setDepth(1), spin: 0 };
+        v.img.setData('x', x).setData('y', y).setData('z', z);
+        this.itemViews.set(id, v);
+      }
+      const weapon = ITEMS[kind].type === 'weapon';
+      // pozycja: trzymany przez gracza — za widokiem postaci (płynnie); reszta — ze snapshotu
+      let ix: number;
+      let iy: number;
+      let iz: number;
+      let face = 1;
+      let anim: AnimName = 'idle';
+      if (holder === 1 || holder === 2) {
+        const c: CharId = holder === 1 ? 'pole' : 'romanian';
+        const cv = this.views[c];
+        ix = cv.x;
+        iy = cv.y;
+        iz = c === this.me ? this.z : cv.z;
+        face = c === this.me ? this.face : s.p[c].face;
+        anim = cv.anim || 'idle';
+      } else {
+        const px = v.img.getData('x') as number;
+        const py = v.img.getData('y') as number;
+        const pz = v.img.getData('z') as number;
+        const far = Math.abs(x - px) > 60;
+        ix = far ? x : px + (x - px) * lerp;
+        iy = far ? y : py + (y - py) * lerp;
+        iz = far ? z : pz + (z - pz) * lerp;
+        v.img.setData('x', ix).setData('y', iy).setData('z', iz);
+      }
+      const img = v.img;
+      img.setFlipX(false).setRotation(0);
+      // NPC: snapshot ma już wysokość trzymania — liczymy od jego stóp
+      const hz = holder === 3 ? 0 : iz;
+      if (holder !== 0 && weapon) {
+        // broń w dłoni
+        const ang = anim === 'atk' ? 15 : anim === 'jatk' ? 35 : anim === 'block' ? -95 : -55;
+        img.setOrigin(0.12, 0.5).setFlipX(face < 0);
+        if (face < 0) img.setOrigin(0.88, 0.5);
+        img.setRotation(Phaser.Math.DegToRad(ang) * face);
+        img.setPosition(Math.round(ix + face * 8), Math.round(iy - 17 - hz)).setDepth(iy + 1);
+        v.shadow.setVisible(false);
+      } else if (holder !== 0) {
+        // nad głową
+        img.setOrigin(0.5, 1).setPosition(Math.round(ix), Math.round(iy - 26 - hz)).setDepth(iy + 1);
+        v.shadow.setVisible(false);
+      } else {
+        img.setOrigin(0.5, 1).setPosition(Math.round(ix), Math.round(iy - iz)).setDepth(iy);
+        if (thrown && (kind === 'tire' || kind === 'bottle' || weapon)) {
+          v.spin += dt * 14;
+          img.setOrigin(0.5, 0.5).setRotation(v.spin).setY(Math.round(iy - iz - img.height / 2));
+        }
+        v.shadow.setVisible(true).setPosition(Math.round(ix), Math.round(iy));
+      }
+    }
+    for (const [id, v] of this.itemViews) {
+      if (seen.has(id)) continue;
+      v.img.destroy();
+      v.shadow.destroy();
+      this.itemViews.delete(id);
+    }
+    const seenC = new Set<number>();
+    for (const [id, x, y, left] of s.co) {
+      seenC.add(id);
+      let c = this.coinViews.get(id);
+      if (!c) {
+        c = this.add.image(x, y - 3, 'coin').setDepth(y);
+        this.coinViews.set(id, c);
+        this.tweens.add({ targets: c, y: y - 12, duration: 180, yoyo: true, ease: 'Quad.out' });
+      }
+      c.setVisible(left > 3 || Math.floor(this.time.now / 120) % 2 === 0);
+    }
+    for (const [id, c] of this.coinViews) {
+      if (seenC.has(id)) continue;
+      c.destroy();
+      this.coinViews.delete(id);
+    }
+  }
+
   /** Podpowiedź dla lokalnego gracza — co zrobi AKCJA w tym miejscu. */
   actionHint(): string {
     return this.actionInfo().text;
@@ -665,12 +760,14 @@ export class GameScene extends Phaser.Scene {
     const s = this.snap;
     const none = { text: '', act: false };
     if (!s) return none;
-    const yes = (k: string) => ({ text: t(k), act: true });
+    const yes = (k: string, a?: Record<string, string>) => ({ text: t(k, a), act: true });
     const info = (k: string) => ({ text: t(k), act: false });
     const me = s.p[this.me];
     if (me.down) return info('hint.down');
     if (me.inCar) return info('hint.in_car');
-    if (me.hold) return yes('hint.holding');
+    if (me.hold === 1) return yes('hint.holding');
+    if (me.hold === 2) return yes('hint.holding_item');
+    if (me.hold === 3) return yes('hint.weapon');
     const near = (x: number, y: number, rx: number, ry: number) => Math.abs(this.px - x) < rx && Math.abs(this.py - y) < ry;
     const o = s.p[this.other];
     if (o.present && o.down && near(o.x, o.y, 28, 16)) return yes('hint.revive');
@@ -685,6 +782,9 @@ export class GameScene extends Phaser.Scene {
     }
     for (const [, , x, y, , anim, f, , z] of s.n) {
       if (anim === 'down' && !(f & NF_KO) && z === 0 && near(x, y, 30, 14)) return yes('hint.lift');
+    }
+    for (const [, kind, x, y, z, holder] of s.it) {
+      if (holder === 0 && z === 0 && near(x, y, 18, 12)) return yes('hint.pickup', { i: `item.${kind}` });
     }
     for (const [, , x, y, face, , f] of s.n) {
       if (!near(x, y, 36, 14)) continue;

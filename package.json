@@ -7,7 +7,7 @@
     "dev:server": "tsx watch server/server.ts",
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
     "start": "node build/server/server.js",
-    "assets": "python3 tools/gen_sprites.py && python3 tools/gen_sounds.py",
+    "assets": "python3 tools/gen_sprites.py && python3 tools/gen_sounds.py && python3 tools/gen_ch2.py",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },

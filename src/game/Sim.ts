@@ -14,12 +14,13 @@ import {
 } from './constants';
 import { mulberry32, randomSeed, Rng } from './rng';
 import { PROLOG, Role } from './data/areas';
+import { ITEMS, ItemKind, NPC_THROW_DMG } from './data/items';
 import {
   attackDmg,
   baseStats,
   CharStats,
   dmgTaken,
-  knockdownHits,
+    knockdownHits,
   knockdownTime,
   maxHp,
   sneakTimeMult,
@@ -30,7 +31,9 @@ import {
   ActKind,
   AtkKind,
   GameEvent,
+  CoinSnap,
   HoldKind,
+  ItemSnap,
   NF_ALERT,
   NF_KO,
   NF_LOOTED,
@@ -56,7 +59,8 @@ export type NpcState =
   | 'down'
   | 'getup'
   | 'held'
-  | 'thrown';
+  | 'thrown'
+  | 'aim';
 
 export interface Npc {
   id: number;
@@ -91,6 +95,38 @@ export interface Npc {
   by: CharId | null;
   /** kogo już trafił w locie */
   hitIds: number[];
+  /** trzymany przedmiot (-1 = brak) */
+  holdItem: number;
+  /** ile € wypada po nokaucie (monety na ziemi) */
+  coins: number;
+  /** czy podnosi przedmioty i nimi rzuca */
+  grabs: boolean;
+}
+
+export interface Item {
+  id: number;
+  kind: ItemKind;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vz: number;
+  state: 'ground' | 'held' | 'thrown';
+  /** gracz trzymający / rzucający */
+  by: CharId | null;
+  /** NPC trzymający / rzucający (-1 = brak) */
+  byNpc: number;
+  dur: number;
+  hitIds: number[];
+  rollT: number;
+}
+
+export interface Coin {
+  id: number;
+  x: number;
+  y: number;
+  v: number;
+  t: number;
 }
 
 export interface PlayerSim {
@@ -115,6 +151,8 @@ export interface PlayerSim {
   holdNpc: number;
   /** po podniesieniu trzeba puścić AKCJĘ, zanim zadziała kolejna */
   latch: boolean;
+  /** id trzymanego przedmiotu */
+  holdItem: number;
 }
 
 const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
@@ -128,6 +166,7 @@ const ACT_TIME: Record<Exclude<ActKind, ''>, number> = {
   enter: 0.35,
   lift: 0.25,
   drop: 0.1,
+  pickup: 0.15,
 };
 
 const SNEAKY: ActKind[] = ['pickpocket', 'gnome', 'lockpick', 'carlock', 'bike'];
@@ -145,6 +184,9 @@ const BASE_HP: Record<NpcKind, number> = {
   polizei: 70,
 };
 const RAGE_HP = 30;
+/** Grawitacja lotu rzuconych przedmiotów i ludzi (mniejsza niż przy skoku = dalszy rzut). */
+const ITEM_GRAVITY = 300;
+const BODY_GRAVITY = 350;
 /** Surowe obrażenia ciosu NPC (przed Obroną). */
 const NPC_DMG = 10;
 
@@ -156,6 +198,10 @@ const DISABLED: NpcState[] = ['ko', 'flee', 'hurt', 'down', 'getup', 'held', 'th
 export class Sim {
   players: Record<CharId, PlayerSim>;
   npcs: Npc[] = [];
+  items: Item[] = [];
+  coins: Coin[] = [];
+  /** szerokość bieżącego obszaru */
+  areaW = WORLD_W;
   private nextId = 1;
   stage = 0;
   money = 0;
@@ -198,6 +244,7 @@ export class Sim {
         hitsT: 0,
         holdNpc: -1,
         latch: false,
+        holdItem: -1,
       };
     };
     this.players = { pole: mk('pole'), romanian: mk('romanian') };
@@ -244,6 +291,9 @@ export class Sim {
       comboT: 0,
       by: null,
       hitIds: [],
+      holdItem: -1,
+      coins: 0,
+      grabs: role !== 'police' && this.rng() < 0.4,
     };
     this.npcs.push(n);
     return n;
@@ -251,6 +301,42 @@ export class Sim {
 
   private spawnLevelNpcs() {
     for (const sp of PROLOG.spawns) this.addNpc(sp.kind, sp.role, sp.x, sp.y, sp.minX, sp.maxX, sp.face ?? -1);
+    for (const it of PROLOG.items ?? []) this.addItem(it.kind, it.x, it.y);
+  }
+
+  addItem(kind: ItemKind, x: number, y: number): Item {
+    const it: Item = { id: this.nextId++, kind, x, y, z: 0, vx: 0, vz: 0, state: 'ground', by: null, byNpc: -1, dur: ITEMS[kind].dur, hitIds: [], rollT: 0 };
+    this.items.push(it);
+    return it;
+  }
+
+  private item(id: number): Item | undefined {
+    return id < 0 ? undefined : this.items.find((q) => q.id === id);
+  }
+
+  private removeItem(it: Item) {
+    this.items = this.items.filter((q) => q !== it);
+    for (const p of Object.values(this.players)) if (p.holdItem === it.id) p.holdItem = -1;
+    for (const n of this.npcs) if (n.holdItem === it.id) n.holdItem = -1;
+  }
+
+  /** Monety na ziemi po pokonanym wrogu (zbiera się je, przechodząc obok). */
+  spawnCoins(x: number, y: number, total: number) {
+    if (total <= 0) return;
+    const parts = total >= 30 ? 3 : total >= 10 ? 2 : 1;
+    let left = total;
+    for (let i = 0; i < parts; i++) {
+      const v = i === parts - 1 ? left : Math.round(total / parts);
+      left -= v;
+      this.coins.push({
+        id: this.nextId++,
+        x: Math.max(6, Math.min(this.areaW - 6, x + this.rand(-16, 16))),
+        y: Math.max(WALK_TOP, Math.min(WALK_BOTTOM, y + this.rand(-6, 6))),
+        v,
+        t: 20,
+      });
+    }
+    this.sfx('coin');
   }
 
   // -------------------------------------------------------------------------
@@ -319,8 +405,10 @@ export class Sim {
         if (newAtk > p.lastAtk) {
           p.lastAtk = newAtk;
           if (!p.down && !p.inCar && p.kd <= 0) {
+            const it = this.item(p.holdItem);
             if (p.holdNpc >= 0) this.throwHeld(p);
-            else this.resolveAttack(p, p.in.ak);
+            else if (it && (ITEMS[it.kind].type === 'throw' || p.in.ak === 'j')) this.throwItem(p, it);
+            else this.resolveAttack(p, p.in.ak, it);
           }
         }
       }
@@ -334,6 +422,8 @@ export class Sim {
       for (const p of Object.values(this.players)) if (p.present) this.updateAct(p, dt);
     }
     for (const n of this.npcs) this.updateNpc(n, dt);
+    this.updateItems(dt);
+    this.updateCoins(dt);
     this.updateAlarm(dt);
     this.updateCar(dt);
     this.checkLose();
@@ -342,6 +432,11 @@ export class Sim {
 
   // -------------------------------------------------------------------------
   private knockOut(n: Npc) {
+    this.npcDrop(n);
+    if (n.coins > 0) {
+      this.spawnCoins(n.x, n.y, n.coins);
+      n.coins = 0;
+    }
     n.hp = 0;
     n.state = 'ko';
     n.t = 10;
@@ -354,6 +449,7 @@ export class Sim {
   }
 
   private knockDown(n: Npc, t = 1.1) {
+    this.npcDrop(n);
     n.state = 'down';
     n.t = t;
     n.combo = 0;
@@ -378,11 +474,13 @@ export class Sim {
     return false;
   }
 
-  private resolveAttack(p: PlayerSim, ak: AtkKind) {
+  private resolveAttack(p: PlayerSim, ak: AtkKind, weapon?: Item) {
     const isPole = p.id === 'pole';
     const heavy = ak === 'j' || ak === 'r' || ak === 'c';
-    const range = (isPole ? 32 : 28) + (ak === 'r' ? 6 : ak === 'j' ? 4 : 0);
-    const dmg = Math.round(attackDmg(p.id, p.stats) * (heavy ? 1.25 : 1) * (ak === 'c' ? 1.6 : 1));
+    const wdef = weapon ? ITEMS[weapon.kind] : null;
+    const range = (wdef ? wdef.range : isPole ? 32 : 28) + (ak === 'r' ? 6 : ak === 'j' ? 4 : 0);
+    const base = wdef ? attackDmg('pole', p.stats) + wdef.dmg : attackDmg(p.id, p.stats);
+    const dmg = Math.round(base * (heavy ? 1.25 : 1) * (ak === 'c' ? 1.6 : 1));
     const { x, y, face } = p.in;
     this.sfx('swing');
     let hitSomething = false;
@@ -397,8 +495,14 @@ export class Sim {
       n.vx = face * (knock ? 170 : isPole ? 110 : 140);
       n.face = (-face) as 1 | -1;
       this.ev({ e: 'fx', k: 'hit', x: n.x - face * 4, y: n.y - 22 });
-      this.sfx(isPole ? 'hit' : 'kick');
+      this.sfx(isPole || wdef ? 'hit' : 'kick');
       this.damageNpc(n, dmg, knock, p);
+    }
+    // zużycie broni (np. bagietka łamie się po kilku ciosach)
+    if (hitSomething && weapon && wdef && wdef.dur > 0 && --weapon.dur <= 0) {
+      this.txt('f.broke', x, y - 44, '#ffb060');
+      this.ev({ e: 'fx', k: 'dust', x: x + face * 10, y });
+      this.removeItem(weapon);
     }
     // kłódka roweru — tylko pałka Polaka (albo kopniaki w solo)
     if (this.stage === 1 && this.lockHp > 0) {
@@ -467,7 +571,7 @@ export class Sim {
   private updateThrown(n: Npc, dt: number) {
     n.x += n.vx * dt;
     n.z += n.vz * dt;
-    n.vz -= 600 * dt;
+    n.vz -= BODY_GRAVITY * dt;
     const thrower = n.by ? this.players[n.by] : undefined;
     const dmg = thrower ? throwDmg(thrower.stats) : 15;
     for (const o of this.npcs) {
@@ -491,6 +595,164 @@ export class Sim {
     }
   }
 
+  // --- przedmioty ----------------------------------------------------------
+  private throwItem(p: PlayerSim, it: Item) {
+    p.holdItem = -1;
+    const face = p.in.face;
+    it.state = 'thrown';
+    it.x = p.in.x + face * 10;
+    it.y = p.in.y;
+    it.z = 18 + p.in.z;
+    it.vz = 40;
+    it.vx = face * ITEMS[it.kind].speed;
+    it.by = p.id;
+    it.byNpc = -1;
+    it.hitIds = [];
+    this.sfx('swing');
+  }
+
+  private npcDrop(n: Npc) {
+    const it = this.item(n.holdItem);
+    n.holdItem = -1;
+    if (!it || it.state !== 'held') return;
+    it.state = 'ground';
+    it.z = 0;
+    it.byNpc = -1;
+    it.x = n.x + n.face * 10;
+    it.y = n.y;
+  }
+
+  private playerDrop(p: PlayerSim) {
+    const it = this.item(p.holdItem);
+    p.holdItem = -1;
+    if (!it || it.state !== 'held') return;
+    it.state = 'ground';
+    it.z = 0;
+    it.by = null;
+    it.x = Math.max(6, Math.min(this.areaW - 6, p.in.x + p.in.face * 12));
+    it.y = p.in.y;
+  }
+
+  private landItem(it: Item) {
+    const def = ITEMS[it.kind];
+    it.z = 0;
+    it.vz = 0;
+    if (def.breaks) {
+      this.ev({ e: 'fx', k: 'hit', x: it.x, y: it.y - 4 });
+      this.sfx('hit');
+      this.removeItem(it);
+      return;
+    }
+    if (def.rolls && it.rollT === 0) {
+      it.rollT = 1.4;
+      it.vx *= 0.8;
+      return;
+    }
+    this.ev({ e: 'fx', k: 'dust', x: it.x, y: it.y });
+    it.state = 'ground';
+    it.vx = 0;
+    it.rollT = 0;
+    it.by = null;
+    it.byNpc = -1;
+  }
+
+  private updateItems(dt: number) {
+    for (const it of [...this.items]) {
+      if (it.state === 'held') {
+        const p = it.by ? this.players[it.by] : null;
+        const n = it.byNpc >= 0 ? this.npc(it.byNpc) : null;
+        if (p && p.holdItem === it.id) {
+          it.x = p.in.x;
+          it.y = p.in.y + 0.5;
+          it.z = p.in.z + (ITEMS[it.kind].type === 'throw' ? 24 : 14);
+        } else if (n && n.holdItem === it.id) {
+          it.x = n.x;
+          it.y = n.y + 0.5;
+          it.z = ITEMS[it.kind].type === 'throw' ? 24 : 14;
+        } else {
+          it.state = 'ground';
+          it.z = 0;
+          it.by = null;
+          it.byNpc = -1;
+        }
+        continue;
+      }
+      if (it.state !== 'thrown') continue;
+      it.x += it.vx * dt;
+      if (it.rollT > 0) {
+        it.rollT -= dt;
+        if (it.rollT <= 0) {
+          it.rollT = -1;
+          this.landItem(it);
+          continue;
+        }
+      } else {
+        it.z += it.vz * dt;
+        it.vz -= ITEM_GRAVITY * dt;
+      }
+      if (it.x < 6 || it.x > this.areaW - 6) {
+        it.x = Math.max(6, Math.min(this.areaW - 6, it.x));
+        it.vx = -it.vx * 0.5;
+      }
+      this.itemHits(it);
+      if (this.items.includes(it) && it.rollT === 0 && it.z <= 0) this.landItem(it);
+    }
+  }
+
+  /** Trafienia lecącego przedmiotu: gracza rzut trafia wrogów, NPC — graczy. */
+  private itemHits(it: Item) {
+    if (it.z > 30) return;
+    const def = ITEMS[it.kind];
+    if (it.by) {
+      const thrower = this.players[it.by];
+      const dmg = throwDmg(thrower.stats) + def.dmg;
+      for (const n of this.npcs) {
+        if (UNHITTABLE.includes(n.state) || it.hitIds.includes(n.id)) continue;
+        if (Math.abs(n.x - it.x) > 12 || Math.abs(n.y - it.y) > 12) continue;
+        it.hitIds.push(n.id);
+        n.vx = Math.sign(it.vx) * 150;
+        n.face = (-Math.sign(it.vx) || 1) as 1 | -1;
+        this.ev({ e: 'fx', k: 'hit', x: n.x, y: n.y - 18 });
+        this.sfx('hit');
+        this.damageNpc(n, dmg, true, thrower);
+        if (def.breaks) {
+          this.removeItem(it);
+          return;
+        }
+        if (!def.rolls) it.vx *= 0.4;
+      }
+    } else if (it.byNpc >= 0) {
+      for (const p of this.alive()) {
+        if (it.hitIds.includes(-1 - (p.id === 'pole' ? 0 : 1))) continue;
+        if (Math.abs(p.in.x - it.x) > 12 || Math.abs(p.in.y - it.y) > 12) continue;
+        if (p.in.z >= 12 || p.invuln > 0 || p.kd > 0) continue;
+        it.hitIds.push(-1 - (p.id === 'pole' ? 0 : 1));
+        const dir = (Math.sign(it.vx) || 1) as 1 | -1;
+        const blocking = p.in.anim === 'block' && p.in.face === -dir;
+        this.hurtPlayer(p, NPC_THROW_DMG + def.dmg / 2, dir, blocking);
+        if (def.breaks) {
+          this.removeItem(it);
+          return;
+        }
+        it.vx *= -0.3;
+      }
+    }
+  }
+
+  private updateCoins(dt: number) {
+    for (const c of this.coins) c.t -= dt;
+    for (const p of this.alive()) {
+      for (const c of this.coins) {
+        if (c.t <= 0 || Math.abs(p.in.x - c.x) > 12 || Math.abs(p.in.y - c.y) > 10 || p.in.z > 6) continue;
+        c.t = 0;
+        this.money += c.v;
+        this.sfx('coin');
+        this.txt(`+${c.v}€`, c.x, c.y - 16, '#ffe040');
+      }
+    }
+    this.coins = this.coins.filter((c) => c.t > 0);
+  }
+
   // -------------------------------------------------------------------------
   private near(p: PlayerSim, x: number, y: number, rx: number, ry: number) {
     return Math.abs(p.in.x - x) < rx && Math.abs(p.in.y - y) < ry;
@@ -499,6 +761,7 @@ export class Sim {
   private chooseAct(p: PlayerSim): { kind: ActKind; target: number } {
     const other = this.mate(p);
     if (p.holdNpc >= 0) return { kind: 'drop', target: p.holdNpc };
+    if (p.holdItem >= 0) return { kind: 'drop', target: p.holdItem };
     // reanimacja kumpla
     if (other.present && other.down && this.near(p, other.in.x, other.in.y, 28, 16)) return { kind: 'revive', target: 100 };
     // cele poziomów
@@ -523,6 +786,11 @@ export class Sim {
     for (const n of this.npcs) {
       if (n.state !== 'down' || n.z > 0) continue;
       if (Math.abs(n.x - p.in.x) < 30 && Math.abs(n.y - p.in.y) < 14) return { kind: 'lift', target: n.id };
+    }
+    // przedmiot na ziemi
+    for (const it of this.items) {
+      if (it.state !== 'ground') continue;
+      if (Math.abs(it.x - p.in.x) < 18 && Math.abs(it.y - p.in.y) < 12) return { kind: 'pickup', target: it.id };
     }
     // przeszukanie znokautowanego
     let best: Npc | null = null;
@@ -660,8 +928,20 @@ export class Sim {
         break;
       }
       case 'drop':
-        this.releaseHeld(p);
+        if (p.holdItem >= 0) this.playerDrop(p);
+        else this.releaseHeld(p);
         break;
+      case 'pickup': {
+        const it = this.item(target);
+        if (!it || it.state !== 'ground') return;
+        it.state = 'held';
+        it.by = p.id;
+        it.byNpc = -1;
+        p.holdItem = it.id;
+        p.latch = true;
+        this.sfx('click');
+        break;
+      }
       case 'revive': {
         const other = this.mate(p);
         other.down = false;
@@ -701,6 +981,7 @@ export class Sim {
       case 'enter':
         p.inCar = true;
         this.releaseHeld(p);
+        this.playerDrop(p);
         this.sfx('click');
         if (Object.values(this.players).every((q) => !q.present || q.inCar)) {
           this.carGone = 1;
@@ -802,6 +1083,10 @@ export class Sim {
         n.t -= dt;
         if (n.t <= 0) n.state = 'chase';
         return;
+      case 'aim':
+        n.t -= dt;
+        if (n.t <= 0) this.npcThrow(n);
+        return;
       case 'chase': {
         let tgt = n.target ? this.players[n.target] : null;
         if (!tgt || !tgt.present || tgt.down || tgt.inCar) {
@@ -819,11 +1104,31 @@ export class Sim {
         const dx = tgt.in.x - n.x;
         const dy = tgt.in.y - n.y;
         n.face = (dx >= 0 ? 1 : -1) as 1 | -1;
-        const wantX = tgt.in.x - n.face * 18;
+        const held = this.item(n.holdItem);
+        // podnieś coś z ziemi po drodze
+        if (!held && n.grabs) {
+          const it = this.items.find((q) => q.state === 'ground' && Math.abs(q.x - n.x) < 16 && Math.abs(q.y - n.y) < 10);
+          if (it) {
+            it.state = 'held';
+            it.byNpc = n.id;
+            it.by = null;
+            n.holdItem = it.id;
+            n.atkCd = Math.max(n.atkCd, 0.4);
+            return;
+          }
+        }
+        // rzut z dystansu
+        if (held && ITEMS[held.kind].type === 'throw' && n.atkCd <= 0 && Math.abs(dy) < 8 && Math.abs(dx) > 40 && Math.abs(dx) < 150) {
+          n.state = 'aim';
+          n.t = 0.5;
+          return;
+        }
+        const wantX = tgt.in.x - n.face * (held && ITEMS[held.kind].type === 'weapon' ? 26 : 18);
         const mx = wantX - n.x;
         if (Math.abs(mx) > 2) n.x += Math.sign(mx) * Math.min(Math.abs(mx), spd * dt);
         if (Math.abs(dy) > 2) n.y += Math.sign(dy) * Math.min(Math.abs(dy), spd * 0.7 * dt);
-        if (Math.abs(dx) < 26 && Math.abs(dy) < 8 && n.atkCd <= 0) {
+        const reach = held && ITEMS[held.kind].type === 'weapon' ? 34 : 26;
+        if (Math.abs(dx) < reach && Math.abs(dy) < 8 && n.atkCd <= 0) {
           n.state = 'windup';
           n.t = n.rage ? 0.3 : 0.4;
         }
@@ -900,12 +1205,34 @@ export class Sim {
     return best;
   }
 
+  private npcThrow(n: Npc) {
+    const it = this.item(n.holdItem);
+    n.holdItem = -1;
+    n.state = 'recover';
+    n.t = 0.5;
+    n.atkCd = 1.6;
+    if (!it) return;
+    it.state = 'thrown';
+    it.x = n.x + n.face * 10;
+    it.y = n.y;
+    it.z = 18;
+    it.vz = 40;
+    it.vx = n.face * ITEMS[it.kind].speed * 0.85;
+    it.by = null;
+    it.byNpc = n.id;
+    it.hitIds = [];
+    this.sfx('swing');
+  }
+
   private npcStrike(n: Npc) {
     n.atkCd = n.rage ? 0.6 : 1.0;
-    const raw = n.rage ? NPC_DMG * 2 : NPC_DMG;
+    const held = this.item(n.holdItem);
+    const weapon = held && ITEMS[held.kind].type === 'weapon' ? ITEMS[held.kind] : null;
+    const raw = (n.rage ? NPC_DMG * 2 : NPC_DMG) + (weapon ? weapon.dmg : 0);
+    const reach = weapon ? 38 : 30;
     for (const p of this.alive()) {
       const dx = (p.in.x - n.x) * n.face;
-      if (dx < -4 || dx > 30 || Math.abs(p.in.y - n.y) > 12) continue;
+      if (dx < -4 || dx > reach || Math.abs(p.in.y - n.y) > 12) continue;
       if (p.in.z >= 12) continue; // przeskoczył
       if (p.invuln > 0 || p.kd > 0) continue;
       const blocking = p.in.anim === 'block' && p.in.face === -n.face;
@@ -931,6 +1258,7 @@ export class Sim {
         p.kd = knockdownTime(p.stats);
         p.invuln = p.kd + 0.6;
         this.releaseHeld(p);
+        this.playerDrop(p);
         this.ev({ e: 'hurt', who: p.id, dx: dir * 22, kd: p.kd });
       } else {
         p.invuln = 0.7;
@@ -942,6 +1270,7 @@ export class Sim {
       p.down = true;
       p.prog = 0;
       this.releaseHeld(p);
+      this.playerDrop(p);
       this.sfx('ko');
       const other = this.mate(p);
       this.ev({
@@ -1012,14 +1341,23 @@ export class Sim {
       case 'strike':
       case 'recover':
         return 'atk';
+      case 'aim':
+        return 'hold';
       case 'walk':
       case 'flee':
         return 'walk';
       case 'chase':
-        return 'walk';
+        return n.holdItem >= 0 && this.item(n.holdItem) && ITEMS[this.item(n.holdItem)!.kind].type === 'throw' ? 'hold' : 'walk';
       default:
         return 'idle';
     }
+  }
+
+  private holdKind(p: PlayerSim): HoldKind {
+    if (p.holdNpc >= 0) return 1;
+    const it = this.item(p.holdItem);
+    if (!it) return 0;
+    return ITEMS[it.kind].type === 'throw' ? 2 : 3;
   }
 
   snapshot(): Snapshot {
@@ -1057,7 +1395,7 @@ export class Sim {
       present: p.present,
       mhp: maxHp(p.stats),
       kd: Math.round(p.kd * 100) / 100,
-      hold: (p.holdNpc >= 0 ? 1 : 0) as HoldKind,
+      hold: this.holdKind(p),
       st: statsToArray(p.stats),
     });
     const ev = this.events;
@@ -1066,6 +1404,11 @@ export class Sim {
       t: Math.round(this.time * 100) / 100,
       p: { pole: mkP(this.players.pole), romanian: mkP(this.players.romanian) },
       n,
+      it: this.items.map((q): ItemSnap => {
+        const holder = q.state !== 'held' ? 0 : q.by === 'pole' ? 1 : q.by === 'romanian' ? 2 : 3;
+        return [q.id, q.kind, Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10, Math.round(q.z), holder, q.state === 'thrown' ? 1 : 0];
+      }),
+      co: this.coins.map((c): CoinSnap => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.t * 10) / 10]),
       o: { gnome: this.gnome, lockHp: this.lockHp, bike: this.bike, carUnlocked: this.carUnlocked, carGone: this.carGone, carX: Math.round(this.carX) },
       money: this.money,
       alarm: Math.round(this.alarm),
